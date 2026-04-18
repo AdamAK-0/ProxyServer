@@ -25,6 +25,14 @@ class DemoHandler(BaseHTTPRequestHandler):
     mitm_target_host = "example.com"
     mitm_target_path = "/"
 
+    def handle(self) -> None:
+        """Ignore browser connection resets so the demo log stays readable."""
+
+        try:
+            super().handle()
+        except ConnectionResetError:
+            return
+
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
@@ -137,11 +145,12 @@ class DemoHandler(BaseHTTPRequestHandler):
 
         header, _, response_body = raw.partition(b"\r\n\r\n")
         status_line = header.split(b"\r\n", 1)[0].decode("iso-8859-1", errors="replace")
+        display_body = self._decode_http_body(header, response_body)
         return {
             "command": command,
             "ok": status_line.startswith("HTTP/1.1 200") or status_line.startswith("HTTP/1.0 200"),
             "status_line": status_line,
-            "body": response_body.decode("utf-8", errors="replace"),
+            "body": display_body.decode("utf-8", errors="replace"),
             "bytes": len(raw),
             "error": "",
         }
@@ -219,11 +228,12 @@ class DemoHandler(BaseHTTPRequestHandler):
 
         header, _, response_body = raw.partition(b"\r\n\r\n")
         status_line = header.split(b"\r\n", 1)[0].decode("iso-8859-1", errors="replace")
+        display_body = self._decode_http_body(header, response_body)
         return {
             "command": command,
             "ok": bool(raw) and status_line.startswith(("HTTP/1.1 200", "HTTP/1.0 200")),
             "status_line": status_line,
-            "body": response_body.decode("utf-8", errors="replace")[:3000],
+            "body": display_body.decode("utf-8", errors="replace")[:3000],
             "bytes": len(raw),
             "error": "",
             "mitm_detected": mitm_detected,
@@ -254,6 +264,28 @@ class DemoHandler(BaseHTTPRequestHandler):
                 break
             data.extend(chunk)
         return bytes(data)
+
+    @staticmethod
+    def _decode_http_body(header: bytes, body: bytes) -> bytes:
+        header_text = header.decode("iso-8859-1", errors="replace").lower()
+        if "transfer-encoding: chunked" not in header_text:
+            return body
+        decoded = bytearray()
+        remaining = body
+        while remaining:
+            size_text, separator, after_size = remaining.partition(b"\r\n")
+            if not separator:
+                return body
+            try:
+                size = int(size_text.split(b";", 1)[0], 16)
+            except ValueError:
+                return body
+            if size == 0:
+                return bytes(decoded)
+            chunk = after_size[:size]
+            decoded.extend(chunk)
+            remaining = after_size[size + 2 :]
+        return bytes(decoded)
 
     @staticmethod
     def _certificate_name_text(name_parts: object) -> str:
@@ -586,7 +618,7 @@ class DemoHandler(BaseHTTPRequestHandler):
         lines.push("");
       }
       lines.push(item.body || item.error || "");
-      return lines.join("\n");
+      return lines.join("\\n");
     }
 
     function escapeHtml(value) {
