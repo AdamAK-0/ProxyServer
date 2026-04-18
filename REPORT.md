@@ -95,6 +95,9 @@ Implemented in `caching_proxy/access_control.py`.
 - Supports blacklist mode.
 - Supports whitelist-only mode.
 - Supports exact domains, subdomains, wildcard domains such as `*.example.com`, IP addresses, and URL text patterns.
+- Supports host-and-port rules such as `example.com:443` and `127.0.0.1:9000`.
+- Reloads `data/filters.json` during runtime so manual file edits are reflected.
+- Accepts UTF-8 files with or without a BOM, which helps when editing JSON from Windows tools.
 - Blacklist rules take priority over whitelist rules.
 - Blocked requests receive a custom `403 Forbidden` response.
 
@@ -173,7 +176,7 @@ Test cases:
 Latest test result:
 
 ```text
-Ran 8 tests in 4.880s
+Ran 14 tests in 7.851s
 
 OK
 ```
@@ -231,7 +234,7 @@ curl.exe -x http://127.0.0.1:8888 https://example.com/ -I
 Show blacklist:
 
 1. Open `http://127.0.0.1:8081`.
-2. Add `127.0.0.1` to the blacklist.
+2. Add `127.0.0.1:9000` to the blacklist.
 3. Run the local origin curl command again.
 4. Confirm the proxy returns `403 Forbidden`.
 

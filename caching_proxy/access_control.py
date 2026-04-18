@@ -22,6 +22,7 @@ class AccessController:
         self.blacklist: set[str] = set()
         self.whitelist: set[str] = set()
         self.whitelist_enabled = whitelist_enabled
+        self._last_loaded_mtime: float | None = None
         self.load()
 
     def load(self) -> None:
@@ -29,13 +30,16 @@ class AccessController:
             self.save()
             return
         try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
+            data = json.loads(self.path.read_text(encoding="utf-8-sig"))
+            mtime = self.path.stat().st_mtime
         except (json.JSONDecodeError, OSError):
             data = {}
+            mtime = None
         with self._lock:
             self.blacklist = {self._normalize_pattern(item) for item in data.get("blacklist", [])}
             self.whitelist = {self._normalize_pattern(item) for item in data.get("whitelist", [])}
             self.whitelist_enabled = bool(data.get("whitelist_enabled", self.whitelist_enabled))
+            self._last_loaded_mtime = mtime
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -46,8 +50,13 @@ class AccessController:
                 "whitelist_enabled": self.whitelist_enabled,
             }
         self.path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        try:
+            self._last_loaded_mtime = self.path.stat().st_mtime
+        except OSError:
+            self._last_loaded_mtime = None
 
     def add(self, list_name: str, pattern: str) -> None:
+        self.reload_if_changed()
         pattern = self._normalize_pattern(pattern)
         if not pattern:
             return
@@ -57,6 +66,7 @@ class AccessController:
         self.save()
 
     def remove(self, list_name: str, pattern: str) -> None:
+        self.reload_if_changed()
         pattern = self._normalize_pattern(pattern)
         with self._lock:
             target = self.blacklist if list_name == "blacklist" else self.whitelist
@@ -64,6 +74,7 @@ class AccessController:
         self.save()
 
     def set_whitelist_enabled(self, enabled: bool) -> None:
+        self.reload_if_changed()
         with self._lock:
             self.whitelist_enabled = enabled
         self.save()
@@ -71,6 +82,7 @@ class AccessController:
     def check(self, host: str, url: str) -> tuple[bool, str]:
         """Return (allowed, reason). Blacklist takes priority."""
 
+        self.reload_if_changed()
         normalized_host = self._normalize_host(host)
         normalized_url = url.lower()
         with self._lock:
@@ -91,12 +103,19 @@ class AccessController:
         return True, "allowed"
 
     def snapshot(self) -> dict[str, Any]:
+        self.reload_if_changed()
         with self._lock:
             return {
                 "blacklist": sorted(self.blacklist),
                 "whitelist": sorted(self.whitelist),
                 "whitelist_enabled": self.whitelist_enabled,
             }
+
+    def reload_if_changed(self) -> None:
+        """Pick up manual edits to data/filters.json while the proxy is running."""
+
+        if self.path.exists():
+            self.load()
 
     @classmethod
     def _normalize_pattern(cls, pattern: str) -> str:
@@ -117,12 +136,15 @@ class AccessController:
             return False
         if "://" in pattern or "/" in pattern:
             return pattern in url
-        if pattern.startswith("*."):
-            suffix = pattern[2:]
+        if ":" in pattern and pattern in url:
+            return True
+        host_pattern = cls._host_part(pattern)
+        if host_pattern.startswith("*."):
+            suffix = host_pattern[2:]
             return host == suffix or host.endswith("." + suffix)
-        if cls._is_ip(pattern) or cls._is_ip(host):
-            return host == pattern
-        return host == pattern or host.endswith("." + pattern)
+        if cls._is_ip(host_pattern) or cls._is_ip(host):
+            return host == host_pattern
+        return host == host_pattern or host.endswith("." + host_pattern)
 
     @staticmethod
     def _is_ip(value: str) -> bool:
@@ -131,3 +153,13 @@ class AccessController:
             return True
         except ValueError:
             return False
+
+    @staticmethod
+    def _host_part(pattern: str) -> str:
+        if pattern.startswith("[") and "]" in pattern:
+            return pattern[1 : pattern.index("]")]
+        if ":" in pattern and pattern.count(":") == 1:
+            host_part, port_part = pattern.rsplit(":", 1)
+            if port_part.isdigit():
+                return host_part
+        return pattern

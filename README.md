@@ -188,8 +188,10 @@ Important: open the admin page at `http://127.0.0.1:8081`, not `http://127.0.0.1
 Filter examples:
 
 - `example.com` blocks/allows the domain and subdomains.
+- `example.com:443` blocks/allows a specific host and port.
 - `*.example.com` blocks/allows wildcard subdomains.
 - `127.0.0.1` blocks/allows an IP address.
+- `127.0.0.1:9000` blocks/allows a specific IP and port.
 - `http://example.com/private` matches URL text.
 
 ## Run Automated Tests

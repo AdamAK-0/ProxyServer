@@ -11,6 +11,7 @@ import ssl
 import tempfile
 import threading
 import unittest
+import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -121,6 +122,67 @@ class ProxyIntegrationTests(unittest.TestCase):
         self.assertIn(b"HTTP/1.1 403", response)
         self.assertIn(b"Access denied", response)
         self.assertNotIn("/blocked", CountingOriginHandler.counters)
+
+    def test_blacklist_host_port_rule_rejects_request(self) -> None:
+        self.access.add("blacklist", f"127.0.0.1:{self.origin_port}")
+        response = self._proxy_http("GET", "/blocked-by-port")
+        self.assertIn(b"HTTP/1.1 403", response)
+        self.assertIn(b"blocked by blacklist rule", response)
+        self.assertNotIn("/blocked-by-port", CountingOriginHandler.counters)
+
+    def test_whitelist_only_accepts_matching_host_port_rule(self) -> None:
+        self.access.set_whitelist_enabled(True)
+        blocked = self._proxy_http("GET", "/blocked-without-whitelist")
+        self.assertIn(b"HTTP/1.1 403", blocked)
+        self.assertNotIn("/blocked-without-whitelist", CountingOriginHandler.counters)
+
+        self.access.add("whitelist", f"127.0.0.1:{self.origin_port}")
+        allowed = self._proxy_http("GET", "/allowed-by-port")
+        self.assertIn(b"HTTP/1.1 200", allowed)
+        self.assertIn(b"origin-ok", allowed)
+        self.assertEqual(CountingOriginHandler.counters["/allowed-by-port"], 1)
+
+    def test_manual_filter_file_edit_is_reloaded(self) -> None:
+        self.config.filters_file.write_text(
+            json.dumps(
+                {
+                    "blacklist": [f"127.0.0.1:{self.origin_port}"],
+                    "whitelist": [],
+                    "whitelist_enabled": False,
+                }
+            ),
+            encoding="utf-8",
+        )
+        response = self._proxy_http("GET", "/manual-filter-edit")
+        self.assertIn(b"HTTP/1.1 403", response)
+        self.assertNotIn("/manual-filter-edit", CountingOriginHandler.counters)
+
+    def test_admin_mutation_reloads_manual_filter_file_edit_first(self) -> None:
+        self.access.add("whitelist", "127.0.0.1")
+        self.config.filters_file.write_text(
+            json.dumps({"blacklist": [], "whitelist": [], "whitelist_enabled": False}),
+            encoding="utf-8",
+        )
+        self.access.add("blacklist", f"127.0.0.1:{self.origin_port}")
+        snapshot = self.access.snapshot()
+        self.assertEqual(snapshot["whitelist"], [])
+        self.assertEqual(snapshot["blacklist"], [f"127.0.0.1:{self.origin_port}"])
+
+    def test_snapshot_reflects_manual_whitelist_mode_change(self) -> None:
+        self.access.set_whitelist_enabled(True)
+        self.config.filters_file.write_text(
+            json.dumps({"blacklist": [], "whitelist": [], "whitelist_enabled": False}),
+            encoding="utf-8",
+        )
+        self.assertFalse(self.access.snapshot()["whitelist_enabled"])
+
+    def test_manual_filter_file_edit_accepts_utf8_bom(self) -> None:
+        self.access.set_whitelist_enabled(True)
+        self.config.filters_file.write_text(
+            "\ufeff" + json.dumps({"blacklist": [], "whitelist": [], "whitelist_enabled": False}),
+            encoding="utf-8",
+        )
+        self.assertFalse(self.access.snapshot()["whitelist_enabled"])
 
     def test_self_proxy_request_is_rejected_without_recursive_timeout(self) -> None:
         request = (

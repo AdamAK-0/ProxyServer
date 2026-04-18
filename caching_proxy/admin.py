@@ -598,9 +598,10 @@ class AdminHandler(BaseHTTPRequestHandler):
                 <option value="blacklist">Blacklist</option>
                 <option value="whitelist">Whitelist</option>
               </select>
-              <input type="text" name="pattern" placeholder="example.com or 127.0.0.1" required>
+              <input type="text" name="pattern" placeholder="example.com, example.com:443, or 127.0.0.1:9000" required>
               <button type="submit">Add</button>
             </form>
+            <p class="empty">Rules accept domains, host:port, IP:port, wildcard domains, or full URL text.</p>
             <div class="rules">
               <div class="rule-list">
                 <h3>Blacklist</h3>
