@@ -684,11 +684,14 @@ class AdminHandler(BaseHTTPRequestHandler):
     document.getElementById("refresh-now").addEventListener("click", () => refreshDashboard());
 
     async function submitAction(form) {
-      const body = new FormData(form);
+      const body = new URLSearchParams(new FormData(form));
       await fetch(form.action, {
         method: "POST",
         body,
-        headers: { "X-Requested-With": "admin-fetch" }
+        headers: {
+          "X-Requested-With": "admin-fetch",
+          "Content-Type": "application/x-www-form-urlencoded"
+        }
       });
       if (form.classList.contains("add-rule")) {
         form.reset();
