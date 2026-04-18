@@ -130,6 +130,13 @@ class ProxyIntegrationTests(unittest.TestCase):
         self.assertIn(b"blocked by blacklist rule", response)
         self.assertNotIn("/blocked-by-port", CountingOriginHandler.counters)
 
+    def test_blacklist_host_port_rule_does_not_match_different_port(self) -> None:
+        self.access.add("blacklist", "127.0.0.1:1")
+        response = self._proxy_http("GET", "/different-port")
+        self.assertIn(b"HTTP/1.1 200", response)
+        self.assertIn(b"origin-ok", response)
+        self.assertEqual(CountingOriginHandler.counters["/different-port"], 1)
+
     def test_whitelist_only_accepts_matching_host_port_rule(self) -> None:
         self.access.set_whitelist_enabled(True)
         blocked = self._proxy_http("GET", "/blocked-without-whitelist")
@@ -141,6 +148,13 @@ class ProxyIntegrationTests(unittest.TestCase):
         self.assertIn(b"HTTP/1.1 200", allowed)
         self.assertIn(b"origin-ok", allowed)
         self.assertEqual(CountingOriginHandler.counters["/allowed-by-port"], 1)
+
+    def test_whitelist_host_port_rule_does_not_allow_different_port(self) -> None:
+        self.access.set_whitelist_enabled(True)
+        self.access.add("whitelist", "127.0.0.1:1")
+        response = self._proxy_http("GET", "/wrong-whitelist-port")
+        self.assertIn(b"HTTP/1.1 403", response)
+        self.assertNotIn("/wrong-whitelist-port", CountingOriginHandler.counters)
 
     def test_manual_filter_file_edit_is_reloaded(self) -> None:
         self.config.filters_file.write_text(

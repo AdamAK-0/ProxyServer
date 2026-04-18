@@ -136,8 +136,8 @@ class AccessController:
             return False
         if "://" in pattern or "/" in pattern:
             return pattern in url
-        if ":" in pattern and pattern in url:
-            return True
+        if cls._has_explicit_port(pattern):
+            return pattern in url
         host_pattern = cls._host_part(pattern)
         if host_pattern.startswith("*."):
             suffix = host_pattern[2:]
@@ -153,6 +153,16 @@ class AccessController:
             return True
         except ValueError:
             return False
+
+    @staticmethod
+    def _has_explicit_port(pattern: str) -> bool:
+        if pattern.startswith("[") and "]" in pattern:
+            rest = pattern[pattern.index("]") + 1 :]
+            return rest.startswith(":") and rest[1:].isdigit()
+        if pattern.count(":") == 1:
+            host_part, port_part = pattern.rsplit(":", 1)
+            return bool(host_part) and port_part.isdigit()
+        return False
 
     @staticmethod
     def _host_part(pattern: str) -> str:
