@@ -25,10 +25,16 @@ class ProxyConfig:
     cache_default_ttl: int = 120
     data_dir: Path = Path("data")
     whitelist_enabled: bool = False
+    mitm_enabled: bool = False
+    mitm_verify_origin_tls: bool = True
 
     @property
     def cache_dir(self) -> Path:
         return self.data_dir / "cache"
+
+    @property
+    def mitm_dir(self) -> Path:
+        return self.data_dir / "mitm"
 
     @property
     def filters_file(self) -> Path:
@@ -43,3 +49,5 @@ class ProxyConfig:
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        if self.mitm_enabled:
+            self.mitm_dir.mkdir(parents=True, exist_ok=True)

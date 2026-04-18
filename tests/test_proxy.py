@@ -7,6 +7,7 @@ External code: none; standard library only.
 from __future__ import annotations
 
 import socket
+import ssl
 import tempfile
 import threading
 import unittest
@@ -17,6 +18,7 @@ from caching_proxy.access_control import AccessController
 from caching_proxy.cache import ResponseCache
 from caching_proxy.config import ProxyConfig
 from caching_proxy.logger import RequestLogger
+from caching_proxy.mitm import CertificateAuthority, MitmDependencyError
 from caching_proxy.proxy import ProxyServer
 from caching_proxy.stats import ProxyStats
 
@@ -154,6 +156,66 @@ class ProxyIntegrationTests(unittest.TestCase):
         finally:
             echo_server.stop()
 
+    def test_optional_mitm_decrypts_and_forwards_https_request(self) -> None:
+        try:
+            origin_server = _TLSOriginServer()
+        except MitmDependencyError as exc:
+            self.skipTest(str(exc))
+
+        with tempfile.TemporaryDirectory() as mitm_temp:
+            try:
+                origin_server.start()
+                mitm_config = ProxyConfig(
+                    proxy_port=0,
+                    admin_port=0,
+                    socket_timeout=3,
+                    tunnel_timeout=3,
+                    cache_default_ttl=30,
+                    data_dir=Path(mitm_temp) / "data",
+                    mitm_enabled=True,
+                    mitm_verify_origin_tls=False,
+                )
+                mitm_config.ensure_directories()
+                mitm_proxy = ProxyServer(
+                    mitm_config,
+                    AccessController(mitm_config.filters_file),
+                    ResponseCache(mitm_config.cache_dir, default_ttl=mitm_config.cache_default_ttl),
+                    RequestLogger(mitm_config.log_file),
+                    ProxyStats(),
+                )
+                mitm_thread = mitm_proxy.start_in_thread()
+                try:
+                    response = self._mitm_get(mitm_proxy.bound_port, mitm_config.mitm_dir / "ca.cert.pem", origin_server.port)
+                    self.assertIn(b"HTTP/1.1 200 OK", response)
+                    self.assertIn(b"secure-origin-count-1", response)
+                    self.assertEqual(mitm_proxy.stats.snapshot()["mitm_intercepts"], 1)
+                finally:
+                    mitm_proxy.shutdown()
+                    mitm_thread.join(timeout=2)
+            finally:
+                origin_server.stop()
+
+    def _mitm_get(self, proxy_port: int, ca_cert_path: Path, origin_port: int) -> bytes:
+        with socket.create_connection(("127.0.0.1", proxy_port), timeout=3) as raw_client:
+            raw_client.sendall(
+                (
+                    f"CONNECT 127.0.0.1:{origin_port} HTTP/1.1\r\n"
+                    f"Host: 127.0.0.1:{origin_port}\r\n\r\n"
+                ).encode("ascii")
+            )
+            header = _recv_until(raw_client, b"\r\n\r\n")
+            self.assertIn(b"200 Connection Established", header)
+            client_context = ssl.create_default_context(cafile=str(ca_cert_path))
+            with client_context.wrap_socket(raw_client, server_hostname="127.0.0.1") as tls_client:
+                tls_client.sendall(
+                    (
+                        "GET /secure HTTP/1.1\r\n"
+                        f"Host: 127.0.0.1:{origin_port}\r\n"
+                        "Connection: close\r\n\r\n"
+                    ).encode("ascii")
+                )
+                return _recv_all(tls_client)
+
     def _proxy_http(self, method: str, path: str, body: bytes = b"") -> bytes:
         headers = [
             f"{method} http://127.0.0.1:{self.origin_port}{path} HTTP/1.1",
@@ -199,6 +261,56 @@ class _EchoServer:
                 data = client.recv(1024)
                 if data:
                     client.sendall(b"echo:" + data)
+
+
+class _TLSOriginServer:
+    def __init__(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        ca = CertificateAuthority(Path(self.temp_dir.name) / "origin-ca")
+        cert_path, key_path = ca.certificate_for_host("127.0.0.1")
+        self.context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        self.context.load_cert_chain(certfile=str(cert_path), keyfile=str(key_path))
+        self.listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.listener.bind(("127.0.0.1", 0))
+        self.listener.listen(5)
+        self.port = self.listener.getsockname()[1]
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self._stop = threading.Event()
+        self.count = 0
+
+    def start(self) -> None:
+        self.thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        try:
+            self.listener.close()
+        except OSError:
+            pass
+        self.thread.join(timeout=2)
+        self.temp_dir.cleanup()
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                raw_client, _ = self.listener.accept()
+            except OSError:
+                return
+            try:
+                with self.context.wrap_socket(raw_client, server_side=True) as tls_client:
+                    _recv_until(tls_client, b"\r\n\r\n")
+                    self.count += 1
+                    body = f"secure-origin-count-{self.count}".encode("utf-8")
+                    tls_client.sendall(
+                        b"HTTP/1.1 200 OK\r\n"
+                        + f"Content-Length: {len(body)}\r\n".encode("ascii")
+                        + b"Cache-Control: max-age=60\r\n"
+                        + b"Connection: close\r\n\r\n"
+                        + body
+                    )
+            except OSError:
+                raw_client.close()
 
 
 def _recv_all(sock: socket.socket) -> bytes:

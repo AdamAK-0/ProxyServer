@@ -2,7 +2,7 @@
 
 Contributor: Adam  
 Course: CSC 430 Computer Networks, Spring 2025-2026  
-External code: none. The implementation uses only the Python standard library.
+External code: the default proxy uses only the Python standard library. Optional `--mitm` mode uses the third-party `cryptography` package for certificate generation.
 
 ## What This Project Implements
 
@@ -17,7 +17,7 @@ This project is a multithreaded caching proxy server written in Python. It suppo
 - Disk-backed GET response caching with `Cache-Control`, `Expires`, and fallback timeout support.
 - Blacklist and whitelist filtering for domains, IP addresses, wildcard domains, and URL text.
 - Web admin interface for logs, stats, cache entries, and filter management.
-- Automated integration tests for forwarding, caching, blocking, POST forwarding, and HTTPS tunneling.
+- Automated integration tests for forwarding, caching, blocking, POST forwarding, HTTPS tunneling, and optional MITM interception.
 
 ## Files
 
@@ -36,6 +36,12 @@ This project is a multithreaded caching proxy server written in Python. It suppo
 ## Requirements
 
 Python 3.10 or newer is recommended. No third-party packages are required.
+
+The normal proxy mode uses only the standard library. The optional educational MITM mode requires:
+
+```powershell
+python -m pip install -r requirements.txt
+```
 
 ## Run the Proxy
 
@@ -77,6 +83,44 @@ curl.exe -x http://127.0.0.1:8888 https://example.com/ -I
 ```
 
 The HTTPS command uses a CONNECT tunnel. The proxy forwards encrypted bytes and does not decrypt the traffic.
+
+## Optional HTTPS MITM Mode
+
+By default, HTTPS is tunneled securely without decryption. For educational inspection only, you can enable MITM mode:
+
+```powershell
+python run_proxy.py --mitm
+```
+
+On first run, the proxy creates a local root CA certificate:
+
+```text
+data/mitm/ca.cert.pem
+```
+
+To let a browser or command-line client trust intercepted HTTPS traffic, import/trust that CA certificate for the client you are testing. For `curl.exe`, pass the CA file explicitly:
+
+```powershell
+curl.exe -x http://127.0.0.1:8888 --cacert data\mitm\ca.cert.pem https://example.com/
+```
+
+MITM mode behavior:
+
+- The client still sends `CONNECT host:443`.
+- The proxy replies `200 Connection Established`.
+- The proxy presents a generated certificate for the requested host, signed by `data/mitm/ca.cert.pem`.
+- The proxy decrypts one HTTPS request, logs the real HTTPS URL/method/status, forwards the request to the real server over TLS, and returns the response.
+- Cacheable intercepted HTTPS `GET` responses can be cached using the same cache logic.
+
+Privacy warning: only use `--mitm` in a controlled educational/demo environment. Do not use it on other people's traffic or accounts.
+
+For local HTTPS test servers with self-signed upstream certificates only, you can add:
+
+```powershell
+python run_proxy.py --mitm --mitm-insecure-origin
+```
+
+Do not use `--mitm-insecure-origin` for normal internet browsing because it disables upstream certificate verification.
 
 ## Local Demo Server
 
@@ -158,6 +202,8 @@ Current passing test coverage:
 - Blacklist rejection before contacting the origin server.
 - POST request body forwarding.
 - HTTPS CONNECT byte tunneling without decryption.
+- Optional HTTPS MITM decrypt-forward-reencrypt flow.
+- Self-proxy loop rejection.
 
 ## Notes for Submission
 

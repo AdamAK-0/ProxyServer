@@ -9,6 +9,7 @@ __all__ = [
     "access_control",
     "cache",
     "logger",
+    "mitm",
     "proxy",
     "stats",
 ]

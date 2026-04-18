@@ -6,7 +6,7 @@ Project: Caching Proxy Server
 Course: CSC 430 Computer Networks, Spring 2025-2026  
 Institution: Lebanese American University  
 Contributor: Adam  
-External code used: None. The project uses Python standard library modules only.
+External code used: The default proxy uses Python standard library modules only. Optional MITM mode uses the third-party `cryptography` package for local CA and certificate generation.
 
 Submission due date from assignment: Sunday, April 26, 2026, end of day.
 
@@ -16,7 +16,7 @@ The project implements a threaded caching proxy server in Python. The proxy list
 
 For HTTP requests, the proxy rewrites proxy-style absolute URLs into origin-server request paths, removes hop-by-hop headers, sets the correct `Host` header, and forces `Connection: close` so the full response can be read and relayed cleanly. Cacheable GET responses are stored on disk and reused until invalidated by response headers or by the custom cache timeout.
 
-For HTTPS requests, the proxy supports secure forwarding through `CONNECT`. It returns `200 Connection Established` and then relays encrypted bytes between the client and target server without decrypting or inspecting them. This satisfies the HTTPS forwarding bonus while preserving end-to-end privacy. MITM TLS decryption was intentionally not enabled because it requires installing a trusted root certificate on the client and is privacy-sensitive; the assignment describes MITM as optional for inspection use cases.
+For HTTPS requests, the default proxy mode supports secure forwarding through `CONNECT`. It returns `200 Connection Established` and then relays encrypted bytes between the client and target server without decrypting or inspecting them. An optional educational MITM mode can also be enabled with `--mitm`. In that mode, the proxy creates a local root CA, generates per-host certificates, decrypts one HTTPS request after the CONNECT handshake, forwards it to the real server over TLS, and relays the response back to the client.
 
 A web admin interface runs beside the proxy. It displays logs, cache entries, runtime statistics, and forms for editing blacklist/whitelist rules.
 
@@ -102,10 +102,13 @@ Implemented in `caching_proxy/access_control.py`.
 
 Implemented in `caching_proxy/proxy.py`.
 
-- Supports HTTPS forwarding using the standard proxy `CONNECT` method.
-- The proxy establishes a TCP connection to the target server and relays encrypted bytes.
-- The proxy does not decrypt, log, or inspect HTTPS contents.
-- This design is safer for a class demo because it avoids creating and installing a self-signed MITM certificate.
+- Supports HTTPS forwarding using the standard proxy `CONNECT` method by default.
+- The default mode establishes a TCP connection to the target server and relays encrypted bytes without inspecting contents.
+- Optional MITM inspection is available with `python run_proxy.py --mitm`.
+- MITM mode uses `cryptography` to create `data/mitm/ca.cert.pem` and per-host certificates.
+- A client must trust `data/mitm/ca.cert.pem` before MITM traffic will pass certificate validation.
+- MITM mode decrypts one HTTPS request, logs the HTTPS method/URL/status, forwards upstream over TLS, and returns the response.
+- This mode is documented as educational and privacy-sensitive.
 
 ### I. Admin Interface Bonus
 
@@ -130,6 +133,7 @@ The admin dashboard provides:
 ## Design Properties
 
 - Standard-library only: easy to run on lab machines.
+- Optional MITM mode: requires the `cryptography` package only when enabled.
 - Threaded: supports concurrent clients.
 - Disk-backed cache: survives proxy restart until entries expire or are cleared.
 - Privacy-conscious HTTPS: encrypted data remains encrypted.
@@ -164,11 +168,12 @@ Test cases:
 - `test_post_body_is_forwarded`: verifies POST body forwarding.
 - `test_https_connect_tunnels_bytes_without_decrypting`: verifies CONNECT tunnel byte relay.
 - `test_self_proxy_request_is_rejected_without_recursive_timeout`: verifies accidental self-proxy requests are rejected immediately.
+- `test_optional_mitm_decrypts_and_forwards_https_request`: verifies optional MITM decrypt-forward-reencrypt behavior.
 
 Latest test result:
 
 ```text
-Ran 7 tests in 3.733s
+Ran 8 tests in 4.880s
 
 OK
 ```

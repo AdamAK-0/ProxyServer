@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import select
 import socket
+import ssl
 import threading
 import time
 from datetime import datetime, timezone
@@ -25,6 +26,7 @@ from .http_utils import (
     parse_status_code,
 )
 from .logger import RequestLogger
+from .mitm import CertificateAuthority
 from .stats import ProxyStats
 
 
@@ -48,6 +50,7 @@ class ProxyServer:
         self._ready_event = threading.Event()
         self._server_socket: socket.socket | None = None
         self.bound_port: int | None = None
+        self.mitm_ca = CertificateAuthority(config.mitm_dir) if config.mitm_enabled else None
 
     def serve_forever(self) -> None:
         """Bind the listening socket and accept clients until shutdown."""
@@ -197,6 +200,10 @@ class ProxyServer:
         request: HTTPRequest,
         request_timestamp: str,
     ) -> None:
+        if self.config.mitm_enabled:
+            self._handle_mitm_connect(client_socket, client_address, request, request_timestamp)
+            return
+
         with socket.create_connection((request.host, request.port), timeout=self.config.socket_timeout) as origin:
             origin.settimeout(None)
             client_socket.sendall(b"HTTP/1.1 200 Connection Established\r\nProxy-Agent: CSC430Proxy\r\n\r\n")
@@ -214,6 +221,90 @@ class ProxyServer:
             bytes_to_client=origin_to_client,
             extra={"client_to_origin_bytes": client_to_origin, "origin_to_client_bytes": origin_to_client},
         )
+
+    def _handle_mitm_connect(
+        self,
+        client_socket: socket.socket,
+        client_address: tuple[str, int],
+        tunnel_request: HTTPRequest,
+        request_timestamp: str,
+    ) -> None:
+        """Decrypt one HTTPS request after CONNECT using a generated local cert."""
+
+        if self.mitm_ca is None:
+            raise OSError("MITM mode is not configured")
+
+        cert_path, key_path = self.mitm_ca.certificate_for_host(tunnel_request.host)
+        server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        server_context.load_cert_chain(certfile=str(cert_path), keyfile=str(key_path))
+
+        client_socket.sendall(b"HTTP/1.1 200 Connection Established\r\nProxy-Agent: CSC430Proxy-MITM\r\n\r\n")
+        with server_context.wrap_socket(client_socket, server_side=True) as tls_client:
+            tls_client.settimeout(self.config.socket_timeout)
+            raw_header, body = self._read_client_request(tls_client)
+            decrypted_request = parse_http_request(raw_header, body)
+            decrypted_request.host = tunnel_request.host
+            decrypted_request.port = tunnel_request.port
+            decrypted_request.scheme = "https"
+            decrypted_request.display_url = f"https://{tunnel_request.host}:{tunnel_request.port}{decrypted_request.path}"
+
+            allowed, reason = self.access.check(decrypted_request.host, decrypted_request.display_url)
+            if not allowed:
+                self._send_blocked(tls_client, client_address, decrypted_request, reason, request_timestamp)
+                return
+
+            cache_key = self.cache.make_key(
+                decrypted_request.method,
+                decrypted_request.scheme,
+                decrypted_request.host,
+                decrypted_request.port,
+                decrypted_request.path,
+            )
+            cache_result = "BYPASS"
+            if decrypted_request.method == "GET":
+                cached = self.cache.get(cache_key)
+                if cached is not None:
+                    tls_client.sendall(cached)
+                    self.stats.record_mitm("HIT", bytes_from_origin=0, bytes_to_client=len(cached))
+                    self._log_complete(
+                        client_address,
+                        decrypted_request,
+                        request_timestamp,
+                        status_code=parse_status_code(cached),
+                        cache_result="HIT",
+                        bytes_from_origin=0,
+                        bytes_to_client=len(cached),
+                        extra={"https_mode": "MITM", "cache_key": cache_key},
+                    )
+                    return
+                cache_result = "MISS"
+
+            origin_context = self._origin_tls_context()
+            with socket.create_connection(
+                (tunnel_request.host, tunnel_request.port),
+                timeout=self.config.socket_timeout,
+            ) as origin_tcp:
+                with origin_context.wrap_socket(origin_tcp, server_hostname=tunnel_request.host) as tls_origin:
+                    tls_origin.settimeout(self.config.socket_timeout)
+                    tls_origin.sendall(build_forward_request(decrypted_request))
+                    response = self._read_origin_response(tls_origin)
+
+            stored = False
+            if decrypted_request.method == "GET":
+                stored = self.cache.put(cache_key, decrypted_request.method, decrypted_request.display_url, response)
+
+            tls_client.sendall(response)
+            self.stats.record_mitm(cache_result, bytes_from_origin=len(response), bytes_to_client=len(response))
+            self._log_complete(
+                client_address,
+                decrypted_request,
+                request_timestamp,
+                status_code=parse_status_code(response),
+                cache_result=cache_result,
+                bytes_from_origin=len(response),
+                bytes_to_client=len(response),
+                extra={"https_mode": "MITM", "cache_key": cache_key, "cache_stored": stored},
+            )
 
     def _tunnel(self, client_socket: socket.socket, origin: socket.socket) -> tuple[int, int]:
         """Forward encrypted bytes in both directions without decrypting HTTPS."""
@@ -415,6 +506,12 @@ class ProxyServer:
                 except ValueError as exc:
                     raise BadRequest("invalid Content-Length header") from exc
         return 0
+
+    def _origin_tls_context(self) -> ssl.SSLContext:
+        if self.config.mitm_verify_origin_tls:
+            return ssl.create_default_context()
+        context = ssl._create_unverified_context()
+        return context
 
     def _is_self_proxy_request(self, request: HTTPRequest) -> bool:
         proxy_port = self.bound_port or self.config.proxy_port

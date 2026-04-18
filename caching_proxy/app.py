@@ -38,6 +38,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cache-ttl", type=int, default=120, help="Fallback cache timeout in seconds")
     parser.add_argument("--data-dir", default="data", help="Directory for cache, logs, and filters")
     parser.add_argument("--whitelist-only", action="store_true", help="Only allow whitelist matches")
+    parser.add_argument("--mitm", action="store_true", help="Enable educational HTTPS MITM interception")
+    parser.add_argument(
+        "--mitm-insecure-origin",
+        action="store_true",
+        help="Do not verify upstream HTTPS certificates in MITM mode; useful only for local tests",
+    )
     return parser.parse_args()
 
 
@@ -51,11 +57,16 @@ def main() -> None:
         cache_default_ttl=args.cache_ttl,
         data_dir=Path(args.data_dir),
         whitelist_enabled=args.whitelist_only,
+        mitm_enabled=args.mitm,
+        mitm_verify_origin_tls=not args.mitm_insecure_origin,
     )
     proxy, admin = build_runtime(config)
     admin.start_in_thread()
     print(f"Proxy listening on {config.listen_host}:{config.proxy_port}")
     print(f"Admin dashboard at http://{config.admin_host}:{admin.bound_port}")
+    if config.mitm_enabled:
+        print("MITM mode enabled for educational HTTPS inspection.")
+        print(f"Install/trust this local CA certificate for clients: {config.mitm_dir / 'ca.cert.pem'}")
     try:
         proxy.serve_forever()
     except KeyboardInterrupt:

@@ -657,6 +657,7 @@ class AdminHandler(BaseHTTPRequestHandler):
       ["total_requests", "Total", "requests"],
       ["http_requests", "HTTP", "forwarded"],
       ["https_tunnels", "HTTPS", "CONNECT tunnels"],
+      ["mitm_intercepts", "MITM", "decrypted HTTPS"],
       ["cache_hits", "Hits", "cache"],
       ["cache_misses", "Misses", "cache"],
       ["blocked_requests", "Blocked", "filters"],
