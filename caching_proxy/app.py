@@ -1,0 +1,69 @@
+"""Command-line entry point for running the proxy and admin interface.
+
+Contributor: Adam - application wiring and CLI options.
+External code: none; standard library only.
+"""
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+from .access_control import AccessController
+from .admin import AdminServer
+from .cache import ResponseCache
+from .config import ProxyConfig
+from .logger import RequestLogger
+from .proxy import ProxyServer
+from .stats import ProxyStats
+
+
+def build_runtime(config: ProxyConfig) -> tuple[ProxyServer, AdminServer]:
+    config.ensure_directories()
+    access = AccessController(config.filters_file, whitelist_enabled=config.whitelist_enabled)
+    cache = ResponseCache(config.cache_dir, default_ttl=config.cache_default_ttl)
+    logger = RequestLogger(config.log_file)
+    stats = ProxyStats()
+    proxy = ProxyServer(config, access, cache, logger, stats)
+    admin = AdminServer(config, access, cache, logger, stats)
+    return proxy, admin
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="CSC 430 caching proxy server")
+    parser.add_argument("--host", default="127.0.0.1", help="Proxy listen host")
+    parser.add_argument("--port", type=int, default=8888, help="Proxy listen port")
+    parser.add_argument("--admin-host", default="127.0.0.1", help="Admin dashboard listen host")
+    parser.add_argument("--admin-port", type=int, default=8081, help="Admin dashboard listen port")
+    parser.add_argument("--cache-ttl", type=int, default=120, help="Fallback cache timeout in seconds")
+    parser.add_argument("--data-dir", default="data", help="Directory for cache, logs, and filters")
+    parser.add_argument("--whitelist-only", action="store_true", help="Only allow whitelist matches")
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    config = ProxyConfig(
+        listen_host=args.host,
+        proxy_port=args.port,
+        admin_host=args.admin_host,
+        admin_port=args.admin_port,
+        cache_default_ttl=args.cache_ttl,
+        data_dir=Path(args.data_dir),
+        whitelist_enabled=args.whitelist_only,
+    )
+    proxy, admin = build_runtime(config)
+    admin.start_in_thread()
+    print(f"Proxy listening on {config.listen_host}:{config.proxy_port}")
+    print(f"Admin dashboard at http://{config.admin_host}:{admin.bound_port}")
+    try:
+        proxy.serve_forever()
+    except KeyboardInterrupt:
+        print("\nShutting down proxy...")
+    finally:
+        proxy.shutdown()
+        admin.shutdown()
+
+
+if __name__ == "__main__":
+    main()
