@@ -200,6 +200,8 @@ http://127.0.0.1:9000
 
 The demo UI includes buttons that run the equivalent of `curl.exe -x http://127.0.0.1:8888 http://127.0.0.1:9000/cache` through the proxy and display the result.
 
+When the proxy is running with `--mitm`, the demo UI also includes a `Run MITM HTTPS` button. It performs the equivalent of `curl.exe -x http://127.0.0.1:8888 --cacert data\mitm\ca.cert.pem https://example.com/` server-side and reports whether the proxy CA was detected.
+
 Show HTTP forwarding:
 
 ```powershell

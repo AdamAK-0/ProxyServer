@@ -114,6 +114,8 @@ MITM mode behavior:
 
 Privacy warning: only use `--mitm` in a controlled educational/demo environment. Do not use it on other people's traffic or accounts.
 
+The demo UI at `http://127.0.0.1:9000` also has a `Run MITM HTTPS` button. When the proxy is running with `--mitm`, that button performs the same trust-and-request flow as the `curl.exe --cacert` command from the server side and prints whether the proxy CA was detected in the HTTPS certificate chain.
+
 For local HTTPS test servers with self-signed upstream certificates only, you can add:
 
 ```powershell
@@ -143,6 +145,8 @@ http://127.0.0.1:9000
 ```
 
 The page has buttons that run proxy requests equivalent to the curl commands below and prints the returned body. This is useful for the live demo because you can click `/cache` twice and watch the admin panel update at the same time.
+
+If the proxy is running with `--mitm`, click `Run MITM HTTPS` to demonstrate HTTPS interception without typing the `curl.exe --cacert ...` command manually.
 
 Then test through the proxy:
 

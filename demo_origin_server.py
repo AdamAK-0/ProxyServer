@@ -9,7 +9,9 @@ from __future__ import annotations
 import argparse
 import json
 import socket
+import ssl
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -19,6 +21,9 @@ class DemoHandler(BaseHTTPRequestHandler):
     counters: dict[str, int] = {}
     proxy_host = "127.0.0.1"
     proxy_port = 8888
+    mitm_ca_path = Path("data/mitm/ca.cert.pem")
+    mitm_target_host = "example.com"
+    mitm_target_path = "/"
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
@@ -31,6 +36,9 @@ class DemoHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/proxy-test":
             self._handle_proxy_test(parse_qs(parsed.query))
+            return
+        if path == "/api/mitm-test":
+            self._handle_mitm_test(parse_qs(parsed.query))
             return
 
         self.counters[path] = self.counters.get(path, 0) + 1
@@ -58,6 +66,11 @@ class DemoHandler(BaseHTTPRequestHandler):
             body = self.rfile.read(length).decode("utf-8", errors="replace")
             self._handle_proxy_test(parse_qs(body))
             return
+        if parsed.path == "/api/mitm-test":
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            body = self.rfile.read(length).decode("utf-8", errors="replace")
+            self._handle_mitm_test(parse_qs(body))
+            return
 
         length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(length)
@@ -77,6 +90,14 @@ class DemoHandler(BaseHTTPRequestHandler):
         for _ in range(repeat):
             results.append(self._request_through_proxy(method, target_path, body if method == "POST" else b""))
         self._send_json({"results": results})
+
+    def _handle_mitm_test(self, query: dict[str, list[str]]) -> None:
+        target_host = query.get("host", [self.mitm_target_host])[0] or self.mitm_target_host
+        target_path = query.get("path", [self.mitm_target_path])[0] or self.mitm_target_path
+        if not target_path.startswith("/"):
+            target_path = "/" + target_path
+        result = self._request_https_through_mitm(target_host, 443, target_path)
+        self._send_json({"results": [result]})
 
     def _request_through_proxy(self, method: str, target_path: str, body: bytes) -> dict[str, Any]:
         origin_host, origin_port = self.server.server_address
@@ -125,6 +146,91 @@ class DemoHandler(BaseHTTPRequestHandler):
             "error": "",
         }
 
+    def _request_https_through_mitm(self, target_host: str, target_port: int, target_path: str) -> dict[str, Any]:
+        target_url = f"https://{target_host}{target_path}"
+        command = (
+            f"curl.exe -x http://{self.proxy_host}:{self.proxy_port} "
+            f"--cacert {self.mitm_ca_path} {target_url}"
+        )
+        if not self.mitm_ca_path.exists():
+            return {
+                "command": command,
+                "ok": False,
+                "status_line": "",
+                "body": "",
+                "bytes": 0,
+                "error": (
+                    f"MITM CA file not found at {self.mitm_ca_path}. "
+                    "Restart the proxy with: python run_proxy.py --mitm"
+                ),
+                "mitm_detected": False,
+                "certificate_issuer": "",
+            }
+
+        try:
+            with socket.create_connection((self.proxy_host, self.proxy_port), timeout=10) as raw_proxy:
+                raw_proxy.sendall(
+                    (
+                        f"CONNECT {target_host}:{target_port} HTTP/1.1\r\n"
+                        f"Host: {target_host}:{target_port}\r\n"
+                        "User-Agent: CSC430-demo-ui\r\n\r\n"
+                    ).encode("ascii")
+                )
+                connect_header = self._recv_until(raw_proxy, b"\r\n\r\n")
+                if b"200 Connection Established" not in connect_header:
+                    return {
+                        "command": command,
+                        "ok": False,
+                        "status_line": connect_header.split(b"\r\n", 1)[0].decode("iso-8859-1", errors="replace"),
+                        "body": "",
+                        "bytes": len(connect_header),
+                        "error": "Proxy did not establish the HTTPS tunnel.",
+                        "mitm_detected": False,
+                        "certificate_issuer": "",
+                    }
+
+                context = ssl.create_default_context()
+                context.load_verify_locations(cafile=str(self.mitm_ca_path))
+                with context.wrap_socket(raw_proxy, server_hostname=target_host) as tls_proxy:
+                    peer_cert = tls_proxy.getpeercert()
+                    issuer_text = self._certificate_name_text(peer_cert.get("issuer", ()))
+                    subject_text = self._certificate_name_text(peer_cert.get("subject", ()))
+                    mitm_detected = "CSC 430 Proxy Local Root CA" in issuer_text
+                    tls_proxy.sendall(
+                        (
+                            f"GET {target_path} HTTP/1.1\r\n"
+                            f"Host: {target_host}\r\n"
+                            "User-Agent: CSC430-demo-ui\r\n"
+                            "Connection: close\r\n\r\n"
+                        ).encode("ascii")
+                    )
+                    raw = self._recv_all(tls_proxy)
+        except (OSError, ssl.SSLError) as exc:
+            return {
+                "command": command,
+                "ok": False,
+                "status_line": "",
+                "body": "",
+                "bytes": 0,
+                "error": str(exc),
+                "mitm_detected": False,
+                "certificate_issuer": "",
+            }
+
+        header, _, response_body = raw.partition(b"\r\n\r\n")
+        status_line = header.split(b"\r\n", 1)[0].decode("iso-8859-1", errors="replace")
+        return {
+            "command": command,
+            "ok": bool(raw) and status_line.startswith(("HTTP/1.1 200", "HTTP/1.0 200")),
+            "status_line": status_line,
+            "body": response_body.decode("utf-8", errors="replace")[:3000],
+            "bytes": len(raw),
+            "error": "",
+            "mitm_detected": mitm_detected,
+            "certificate_subject": subject_text,
+            "certificate_issuer": issuer_text,
+        }
+
     @staticmethod
     def _recv_all(sock: socket.socket) -> bytes:
         chunks: list[bytes] = []
@@ -137,6 +243,25 @@ class DemoHandler(BaseHTTPRequestHandler):
                 break
             chunks.append(chunk)
         return b"".join(chunks)
+
+    @staticmethod
+    def _recv_until(sock: socket.socket, marker: bytes) -> bytes:
+        sock.settimeout(10)
+        data = bytearray()
+        while marker not in data:
+            chunk = sock.recv(1024)
+            if not chunk:
+                break
+            data.extend(chunk)
+        return bytes(data)
+
+    @staticmethod
+    def _certificate_name_text(name_parts: object) -> str:
+        values: list[str] = []
+        for group in name_parts:
+            for key, value in group:
+                values.append(f"{key}={value}")
+        return ", ".join(values)
 
     @staticmethod
     def _safe_int(value: str, default: int, minimum: int, maximum: int) -> int:
@@ -188,6 +313,8 @@ class DemoHandler(BaseHTTPRequestHandler):
             {
                 "origin": f"http://{host}:{port}",
                 "proxy": f"http://{self.proxy_host}:{self.proxy_port}",
+                "mitmTarget": f"https://{self.mitm_target_host}{self.mitm_target_path}",
+                "mitmCa": str(self.mitm_ca_path),
             }
         )
         page = """<!doctype html>
@@ -361,6 +488,7 @@ class DemoHandler(BaseHTTPRequestHandler):
           <button data-path="/cache" data-repeat="2">Run /cache Twice</button>
           <button data-path="/nocache" data-repeat="2">Run /nocache Twice</button>
           <button data-path="/post" data-method="POST" data-repeat="1">Run POST</button>
+          <button id="mitm-test" type="button">Run MITM HTTPS</button>
         </div>
       </div>
     </section>
@@ -395,6 +523,8 @@ class DemoHandler(BaseHTTPRequestHandler):
       button.addEventListener("click", () => runTest(button));
     });
 
+    document.getElementById("mitm-test").addEventListener("click", () => runMitmTest());
+
     document.getElementById("clear").addEventListener("click", () => {
       results.innerHTML = "";
       status.textContent = "Waiting";
@@ -421,6 +551,16 @@ class DemoHandler(BaseHTTPRequestHandler):
       status.textContent = `Finished ${new Date().toLocaleTimeString()}`;
     }
 
+    async function runMitmTest() {
+      command.textContent =
+        `curl.exe -x ${DEMO_CONFIG.proxy} --cacert ${DEMO_CONFIG.mitmCa} ${DEMO_CONFIG.mitmTarget}`;
+      status.textContent = "Running MITM HTTPS";
+      const response = await fetch("/api/mitm-test", { method: "POST" });
+      const payload = await response.json();
+      renderResults(payload.results);
+      status.textContent = `Finished ${new Date().toLocaleTimeString()}`;
+    }
+
     function renderResults(items) {
       results.innerHTML = items.map((item, index) => `
         <article class="result">
@@ -428,9 +568,25 @@ class DemoHandler(BaseHTTPRequestHandler):
             <strong>Run ${index + 1}</strong>
             <span class="badge ${item.ok ? "" : "error"}">${escapeHtml(item.status_line || item.error || "No response")}</span>
           </div>
-          <pre>${escapeHtml(item.command)}\n\n${escapeHtml(item.body || item.error)}</pre>
+          <pre>${escapeHtml(resultText(item))}</pre>
         </article>
       `).join("");
+    }
+
+    function resultText(item) {
+      const lines = [item.command, ""];
+      if (Object.prototype.hasOwnProperty.call(item, "mitm_detected")) {
+        lines.push(`MITM detected: ${item.mitm_detected ? "yes" : "no"}`);
+        if (item.certificate_issuer) {
+          lines.push(`Certificate issuer: ${item.certificate_issuer}`);
+        }
+        if (item.certificate_subject) {
+          lines.push(`Certificate subject: ${item.certificate_subject}`);
+        }
+        lines.push("");
+      }
+      lines.push(item.body || item.error || "");
+      return lines.join("\n");
     }
 
     function escapeHtml(value) {
@@ -456,9 +612,13 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=9000)
     parser.add_argument("--proxy-host", default="127.0.0.1")
     parser.add_argument("--proxy-port", type=int, default=8888)
+    parser.add_argument("--mitm-ca", default="data/mitm/ca.cert.pem")
+    parser.add_argument("--mitm-target", default="example.com")
     args = parser.parse_args()
     DemoHandler.proxy_host = args.proxy_host
     DemoHandler.proxy_port = args.proxy_port
+    DemoHandler.mitm_ca_path = Path(args.mitm_ca)
+    DemoHandler.mitm_target_host = args.mitm_target
     server = ThreadingHTTPServer((args.host, args.port), DemoHandler)
     print(f"Demo origin UI listening at http://{args.host}:{args.port}")
     try:
