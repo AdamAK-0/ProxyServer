@@ -206,6 +206,9 @@ Current passing test coverage:
 - GET response caching.
 - `Cache-Control: no-store` invalidation.
 - Blacklist rejection before contacting the origin server.
+- Exact host:port blacklist and whitelist behavior.
+- Runtime filter reloads from `data/filters.json`.
+- Admin form submission, filter add, and whitelist toggle behavior.
 - POST request body forwarding.
 - HTTPS CONNECT byte tunneling without decryption.
 - Optional HTTPS MITM decrypt-forward-reencrypt flow.
@@ -223,3 +226,4 @@ For the final Blackboard report, add screenshots of:
 - Cache hit demo.
 - Blacklist 403 demo.
 - HTTPS CONNECT demo using `curl.exe`.
+- Optional MITM demo button or `curl.exe --cacert` command.

@@ -154,7 +154,7 @@ A third challenge was keeping shared state safe while multiple worker threads ru
 
 ## Testing Overview
 
-Automated tests are in `tests/test_proxy.py`. They start local throwaway servers and do not require the public internet.
+Automated tests are in `tests/test_proxy.py` and `tests/test_admin_ui.py`. They start local throwaway servers and do not require the public internet.
 
 Run:
 
@@ -168,15 +168,25 @@ Test cases:
 - `test_caches_repeated_get_when_headers_allow_it`: verifies GET caching and cache hits.
 - `test_does_not_cache_no_store_response`: verifies `Cache-Control: no-store`.
 - `test_blacklist_rejects_request_before_origin_server`: verifies filtering before origin contact.
+- `test_blacklist_host_port_rule_rejects_request`: verifies exact host:port blacklist matching.
+- `test_blacklist_host_port_rule_does_not_match_different_port`: verifies one blocked port does not block another port.
+- `test_whitelist_only_accepts_matching_host_port_rule`: verifies whitelist-only mode allows matching targets.
+- `test_whitelist_host_port_rule_does_not_allow_different_port`: verifies whitelist host:port rules are exact.
+- `test_manual_filter_file_edit_is_reloaded`: verifies manual `filters.json` changes are picked up while running.
+- `test_admin_mutation_reloads_manual_filter_file_edit_first`: verifies admin edits preserve manual file changes.
+- `test_snapshot_reflects_manual_whitelist_mode_change`: verifies the admin snapshot reflects whitelist mode changes.
+- `test_manual_filter_file_edit_accepts_utf8_bom`: verifies UTF-8 BOM filter files still load correctly.
 - `test_post_body_is_forwarded`: verifies POST body forwarding.
 - `test_https_connect_tunnels_bytes_without_decrypting`: verifies CONNECT tunnel byte relay.
 - `test_self_proxy_request_is_rejected_without_recursive_timeout`: verifies accidental self-proxy requests are rejected immediately.
 - `test_optional_mitm_decrypts_and_forwards_https_request`: verifies optional MITM decrypt-forward-reencrypt behavior.
+- `test_dashboard_submits_forms_as_urlencoded_data`: verifies admin forms send data in the format the server parses.
+- `test_filter_add_and_toggle_mutations_update_state`: verifies admin blacklist/whitelist add and whitelist toggle actions.
 
 Latest test result:
 
 ```text
-Ran 14 tests in 7.851s
+Ran 18 tests in 9.901s
 
 OK
 ```
@@ -249,6 +259,7 @@ Add screenshots to the final submitted report:
 - `/nocache` request showing changing response.
 - Blacklist demo showing `403 Forbidden`.
 - HTTPS CONNECT curl command.
+- Optional MITM demo button or curl command showing decrypted HTTPS mode.
 
 ## Individual Contribution Notes
 
