@@ -18,7 +18,7 @@ For HTTP requests, the proxy rewrites proxy-style absolute URLs into origin-serv
 
 For HTTPS requests, the default proxy mode supports secure forwarding through `CONNECT`. It returns `200 Connection Established` and then relays encrypted bytes between the client and target server without decrypting or inspecting them. An optional educational MITM mode can also be enabled with `--mitm`. In that mode, the proxy creates a local root CA, generates per-host certificates, decrypts one HTTPS request after the CONNECT handshake, forwards it to the real server over TLS, and relays the response back to the client.
 
-A web admin interface runs beside the proxy. It displays logs, cache entries, runtime statistics, and forms for editing blacklist/whitelist rules.
+A PyQt desktop admin interface runs beside the proxy. It displays logs, cache entries, runtime statistics, and controls for editing blacklist/whitelist rules.
 
 ## Requirement Mapping
 
@@ -126,7 +126,7 @@ The admin dashboard provides:
 - Cache hits and misses.
 - Error and blocked request counters.
 - Recent log viewer.
-- Live updates without manual browser refresh.
+- Live updates without manual refresh.
 - Log clearing for clean demonstrations.
 - Counter reset for HTTP, HTTPS, cache, blocked, byte, and error counters.
 - Loop warning when a client accidentally requests the proxy listener itself.
@@ -135,8 +135,7 @@ The admin dashboard provides:
 
 ## Design Properties
 
-- Standard-library only: easy to run on lab machines.
-- Optional MITM mode: requires the `cryptography` package only when enabled.
+- Small dependency set: the proxy core uses the standard library, PyQt5 provides the desktop panels, and optional MITM mode uses `cryptography`.
 - Threaded: supports concurrent clients.
 - Disk-backed cache: survives proxy restart until entries expire or are cleared.
 - Privacy-conscious HTTPS: encrypted data remains encrypted.
@@ -180,13 +179,14 @@ Test cases:
 - `test_https_connect_tunnels_bytes_without_decrypting`: verifies CONNECT tunnel byte relay.
 - `test_self_proxy_request_is_rejected_without_recursive_timeout`: verifies accidental self-proxy requests are rejected immediately.
 - `test_optional_mitm_decrypts_and_forwards_https_request`: verifies optional MITM decrypt-forward-reencrypt behavior.
-- `test_dashboard_submits_forms_as_urlencoded_data`: verifies admin forms send data in the format the server parses.
+- `test_dashboard_payload_contains_runtime_sections`: verifies the admin payload contains stats, filters, cache, and logs.
 - `test_filter_add_and_toggle_mutations_update_state`: verifies admin blacklist/whitelist add and whitelist toggle actions.
+- `test_compatibility_api_updates_filter_state`: verifies the lightweight compatibility API still updates filter state.
 
 Latest test result:
 
 ```text
-Ran 18 tests in 9.901s
+Ran 19 tests in 9.392s
 
 OK
 ```
@@ -205,15 +205,9 @@ Start the local origin server:
 python demo_origin_server.py --port 9000
 ```
 
-Open the browser demo UI:
+The PyQt demo panel opens automatically. It includes buttons that run the equivalent of `curl.exe -x http://127.0.0.1:8888 http://127.0.0.1:9000/cache` through the proxy and display the result.
 
-```text
-http://127.0.0.1:9000
-```
-
-The demo UI includes buttons that run the equivalent of `curl.exe -x http://127.0.0.1:8888 http://127.0.0.1:9000/cache` through the proxy and display the result.
-
-When the proxy is running with `--mitm`, the demo UI also includes a `Run MITM HTTPS` button. It performs the equivalent of `curl.exe -x http://127.0.0.1:8888 --cacert data\mitm\ca.cert.pem https://example.com/` server-side and reports whether the proxy CA was detected.
+When the proxy is running with `--mitm`, the PyQt demo panel also includes a `Run MITM HTTPS` button. It performs the equivalent of `curl.exe -x http://127.0.0.1:8888 --cacert data\mitm\ca.cert.pem https://example.com/` server-side and reports whether the proxy CA was detected.
 
 Show HTTP forwarding:
 
@@ -243,7 +237,7 @@ curl.exe -x http://127.0.0.1:8888 https://example.com/ -I
 
 Show blacklist:
 
-1. Open `http://127.0.0.1:8081`.
+1. Use the PyQt admin panel opened by `python run_proxy.py`.
 2. Add `127.0.0.1:9000` to the blacklist.
 3. Run the local origin curl command again.
 4. Confirm the proxy returns `403 Forbidden`.
@@ -272,17 +266,9 @@ The local demo server is started separately:
 python demo_origin_server.py --port 9000
 ```
 
-The admin dashboard is opened at:
+The PyQt admin panel opens from `python run_proxy.py`.
 
-```text
-http://127.0.0.1:8081
-```
-
-The browser demo page is opened at:
-
-```text
-http://127.0.0.1:9000
-```
+The PyQt demo panel opens from `python demo_origin_server.py --port 9000`.
 
 The automated tests are run with:
 
@@ -293,7 +279,7 @@ python -m unittest discover -v
 The latest test result is:
 
 ```text
-Ran 18 tests in 9.901s
+Ran 19 tests in 9.392s
 
 OK
 ```
@@ -328,7 +314,7 @@ This design keeps startup clean. `run_proxy.py` is only the launcher, `app.py` w
 - `RequestLogger`: writes JSON log records to `data/proxy.log` and reads recent logs for the admin dashboard.
 - `ProxyStats`: stores thread-safe counters for active connections, HTTP requests, HTTPS tunnels, MITM interceptions, cache hits, cache misses, blocked requests, errors, and byte counts.
 - `ProxyServer`: owns the proxy listening socket and request handling.
-- `AdminServer`: owns the web admin dashboard and admin API endpoints.
+- `AdminServer`: owns the PyQt admin dashboard and controller methods.
 
 The proxy and admin server receive the same object instances. This is important because admin changes are applied to the live proxy. For example, when the admin panel adds a blacklist rule, it updates the same `AccessController` used by `_handle_client()`.
 
@@ -591,38 +577,32 @@ The admin interface is implemented in `caching_proxy/admin.py`.
 Startup order:
 
 1. `AdminServer(config, access, cache, logger, stats)` is created.
-2. `admin.start_in_thread()` starts the admin server.
-3. The admin server uses `ThreadingHTTPServer`.
-4. It listens on `127.0.0.1:8081`.
+2. The proxy starts in a background thread.
+3. `admin.run()` opens the PyQt admin panel on the main thread.
+4. A `QTimer` refreshes the dashboard every 1.5 seconds.
 
-Important routes:
+Important controller methods:
 
-- `GET /`: dashboard page.
-- `GET /api/dashboard`: combined JSON payload for stats, logs, cache, filters, and config.
-- `GET /api/logs`: recent logs.
-- `GET /api/cache`: cache entries.
-- `GET /api/filters`: filter state.
-- `POST /filters/add`: add blacklist or whitelist rule.
-- `POST /filters/remove`: remove blacklist or whitelist rule.
-- `POST /filters/toggle`: toggle whitelist-only mode.
-- `POST /cache/clear`: clear cache.
-- `POST /cache/cleanup`: clean expired cache entries.
-- `POST /cache/delete`: delete one cache entry.
-- `POST /logs/clear`: clear log file.
-- `POST /stats/reset`: reset counters.
+- `dashboard_payload()`: combined payload for stats, logs, cache, and filters.
+- `add_filter(...)`: add blacklist or whitelist rule.
+- `remove_filter(...)`: remove blacklist or whitelist rule.
+- `set_whitelist_enabled(...)`: toggle whitelist-only mode.
+- `clear_cache()`: clear cache.
+- `cleanup_cache()`: clean expired cache entries.
+- `delete_cache_entry(...)`: delete one cache entry.
+- `clear_logs()`: clear log file.
+- `reset_stats()`: reset counters.
 
 When a user adds a rule in the admin UI:
 
-1. Browser JavaScript sends a URL-encoded POST request.
-2. `AdminHandler.do_POST()` receives it.
-3. `_read_form()` parses the form body.
-4. `access.add(...)` updates the shared access controller.
-5. The controller saves `data/filters.json`.
-6. `_finish_mutation()` returns `204` for JavaScript requests.
-7. The dashboard refreshes from `/api/dashboard`.
-8. The running proxy immediately uses the new rule.
+1. The PyQt add button reads the selected list and rule text.
+2. `AdminServer.add_filter(...)` validates the list name.
+3. `access.add(...)` updates the shared access controller.
+4. The controller saves `data/filters.json`.
+5. The dashboard refreshes from `dashboard_payload()`.
+6. The running proxy immediately uses the new rule.
 
-The admin interface uses a separate port because the proxy port is for proxied client traffic, while the admin port is a normal web interface. This prevents admin requests from being confused with proxy requests.
+The admin interface is a desktop window now, so it does not bind an HTTP management port. The proxy port remains dedicated to proxied client traffic.
 
 ### Logging Flow
 
@@ -661,7 +641,7 @@ python demo_origin_server.py --port 9000
 
 Important endpoints:
 
-- `/`: browser demo UI.
+- `/`: plain text origin status. The interactive UI is the PyQt demo panel.
 - `/cache`: cacheable response with `Cache-Control: max-age=120`.
 - `/nocache`: non-cacheable response with `Cache-Control: no-store`.
 - `/api/proxy-test`: helper used by UI buttons to make proxy requests.
@@ -686,8 +666,8 @@ python run_proxy.py --mitm
 python demo_origin_server.py --port 9000
 ```
 
-3. Open `http://127.0.0.1:8081`.
-4. Open `http://127.0.0.1:9000`.
+3. Use the PyQt admin panel.
+4. Use the PyQt demo panel.
 5. Click `/cache` twice. The first request should be a cache miss and the second should be a cache hit.
 6. Click `/nocache` twice. The body should change because `no-store` prevents caching.
 7. Add blacklist rule `127.0.0.1:9000`.
@@ -723,7 +703,7 @@ Why use threads? Because the assignment requires multithreading and one worker t
 
 Why not use `requests` for forwarding? Because it would hide the socket-level forwarding required by the assignment.
 
-Why not use Flask for the proxy? Flask is for HTTP route handling, not raw TCP tunneling. The admin page can be a normal HTTP server, but the proxy itself needs sockets.
+Why not use Flask for the proxy? Flask is for HTTP route handling, not raw TCP tunneling. The admin panel is now a PyQt desktop window, while the proxy itself still needs sockets.
 
 Why cache only GET? GET is safe and cacheable. POST can change server state and should not be cached by this simple proxy.
 
@@ -752,7 +732,7 @@ When `python run_proxy.py` runs, the launcher calls `caching_proxy.app.main()`. 
 Add screenshots to the final submitted report:
 
 - Proxy terminal showing `Proxy listening on 127.0.0.1:8888`.
-- Admin dashboard home page.
+- PyQt admin dashboard.
 - Automated test output showing all tests passing.
 - Repeated `/cache` request showing same cached response.
 - `/nocache` request showing changing response.

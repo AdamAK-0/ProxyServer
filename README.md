@@ -2,7 +2,7 @@
 
 Contributor: Adam  
 Course: CSC 430 Computer Networks, Spring 2025-2026  
-External code: the default proxy uses only the Python standard library. Optional `--mitm` mode uses the third-party `cryptography` package for certificate generation.
+External code: PyQt5 is used for the desktop admin/demo panels. Optional `--mitm` mode uses the third-party `cryptography` package for certificate generation.
 
 ## What This Project Implements
 
@@ -16,7 +16,7 @@ This project is a multithreaded caching proxy server written in Python. It suppo
 - JSON-lines logging of request, response, client, target, status, cache, and error details.
 - Disk-backed GET response caching with `Cache-Control`, `Expires`, and fallback timeout support.
 - Blacklist and whitelist filtering for domains, IP addresses, wildcard domains, and URL text.
-- Web admin interface for logs, stats, cache entries, and filter management.
+- PyQt desktop admin panel for logs, stats, cache entries, and filter management.
 - Automated integration tests for forwarding, caching, blocking, POST forwarding, HTTPS tunneling, and optional MITM interception.
 
 ## Files
@@ -26,7 +26,7 @@ This project is a multithreaded caching proxy server written in Python. It suppo
 - `caching_proxy/http_utils.py` - HTTP parsing, header rewriting, and response helpers.
 - `caching_proxy/cache.py` - disk cache and invalidation logic.
 - `caching_proxy/access_control.py` - blacklist/whitelist logic.
-- `caching_proxy/admin.py` - web admin dashboard.
+- `caching_proxy/admin.py` - PyQt admin dashboard.
 - `caching_proxy/logger.py` - JSON-lines request logging.
 - `caching_proxy/stats.py` - thread-safe runtime counters.
 - `demo_origin_server.py` - local demo server for cache and blacklist testing.
@@ -35,9 +35,7 @@ This project is a multithreaded caching proxy server written in Python. It suppo
 
 ## Requirements
 
-Python 3.10 or newer is recommended. No third-party packages are required.
-
-The normal proxy mode uses only the standard library. The optional educational MITM mode requires:
+Python 3.10 or newer is recommended. Install dependencies before running the desktop panels:
 
 ```powershell
 python -m pip install -r requirements.txt
@@ -54,12 +52,12 @@ python run_proxy.py
 Default services:
 
 - Proxy: `127.0.0.1:8888`
-- Admin dashboard: `http://127.0.0.1:8081`
+- Admin dashboard: native PyQt window opened by `python run_proxy.py`
 
 Optional ports:
 
 ```powershell
-python run_proxy.py --port 8888 --admin-port 8081 --cache-ttl 120
+python run_proxy.py --port 8888 --cache-ttl 120
 ```
 
 Runtime files are created in `data/`:
@@ -114,7 +112,7 @@ MITM mode behavior:
 
 Privacy warning: only use `--mitm` in a controlled educational/demo environment. Do not use it on other people's traffic or accounts.
 
-The demo UI at `http://127.0.0.1:9000` also has a `Run MITM HTTPS` button. When the proxy is running with `--mitm`, that button performs the same trust-and-request flow as the `curl.exe --cacert` command from the server side and prints whether the proxy CA was detected in the HTTPS certificate chain.
+The PyQt demo panel also has a `Run MITM HTTPS` button. When the proxy is running with `--mitm`, that button performs the same trust-and-request flow as the `curl.exe --cacert` command from the server side and prints whether the proxy CA was detected in the HTTPS certificate chain.
 
 For local HTTPS test servers with self-signed upstream certificates only, you can add:
 
@@ -138,15 +136,9 @@ Open a second terminal and start the demo origin server:
 python demo_origin_server.py --port 9000
 ```
 
-Then open the browser demo UI:
+The PyQt demo panel opens automatically. Its buttons run proxy requests equivalent to the curl commands below and print the returned body. This is useful for the live demo because you can click `/cache` twice and watch the admin panel update at the same time.
 
-```text
-http://127.0.0.1:9000
-```
-
-The page has buttons that run proxy requests equivalent to the curl commands below and prints the returned body. This is useful for the live demo because you can click `/cache` twice and watch the admin panel update at the same time.
-
-If the proxy is running with `--mitm`, click `Run MITM HTTPS` to demonstrate HTTPS interception without typing the `curl.exe --cacert ...` command manually.
+If the proxy is running with `--mitm`, click `Run MITM HTTPS` in the demo panel to demonstrate HTTPS interception without typing the `curl.exe --cacert ...` command manually.
 
 Then test through the proxy:
 
@@ -163,13 +155,7 @@ Expected behavior:
 
 ## Admin Interface
 
-Visit:
-
-```text
-http://127.0.0.1:8081
-```
-
-The admin page shows:
+The PyQt admin panel opens automatically when you run `python run_proxy.py`. It shows:
 
 - Active connections.
 - Total HTTP requests and HTTPS tunnels.
@@ -178,12 +164,12 @@ The admin page shows:
 - Recent logs.
 - Current cache entries.
 - Blacklist and whitelist rules.
-- Live updates every 1.5 seconds without refreshing the browser.
+- Live updates every 1.5 seconds.
 - A loop warning if a client accidentally requests the proxy port through the proxy.
 - A clear-log action for preparing a clean demo.
 - A reset-counters action for clearing HTTP/cache/error counters before screenshots.
 
-Important: open the admin page at `http://127.0.0.1:8081`, not `http://127.0.0.1:8888`. If your browser is configured to use the proxy, bypass the proxy for local addresses such as `127.0.0.1` and `localhost`.
+Important: the admin panel is no longer served from a browser URL. Do not request the proxy port itself; use the PyQt window for management.
 
 Filter examples:
 
@@ -208,7 +194,7 @@ Current passing test coverage:
 - Blacklist rejection before contacting the origin server.
 - Exact host:port blacklist and whitelist behavior.
 - Runtime filter reloads from `data/filters.json`.
-- Admin form submission, filter add, and whitelist toggle behavior.
+- Admin dashboard payload, filter add, whitelist toggle, and compatibility API behavior.
 - POST request body forwarding.
 - HTTPS CONNECT byte tunneling without decryption.
 - Optional HTTPS MITM decrypt-forward-reencrypt flow.
@@ -221,9 +207,9 @@ The source files include contributor comments as required by the assignment. If 
 For the final Blackboard report, add screenshots of:
 
 - Proxy terminal running.
-- Admin dashboard.
+- PyQt admin dashboard.
 - Automated test output.
 - Cache hit demo.
 - Blacklist 403 demo.
 - HTTPS CONNECT demo using `curl.exe`.
-- Optional MITM demo button or `curl.exe --cacert` command.
+- Optional PyQt MITM demo button or `curl.exe --cacert` command.
