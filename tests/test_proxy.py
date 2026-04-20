@@ -209,6 +209,20 @@ class ProxyIntegrationTests(unittest.TestCase):
         self.assertIn(b"HTTP/1.1 508 Loop Detected", response)
         self.assertIn(b"proxy listener itself", response)
 
+    def test_empty_browser_preconnect_is_ignored(self) -> None:
+        with socket.create_connection(("127.0.0.1", self.proxy_port), timeout=3):
+            pass
+
+        records = self.logger.tail(20)
+        self.assertFalse(
+            any(
+                record.get("event") == "request-error"
+                and record.get("error") == "client closed connection before sending headers"
+                for record in records
+            )
+        )
+        self.assertEqual(self.stats.snapshot()["errors"], 0)
+
     def test_post_body_is_forwarded(self) -> None:
         response = self._proxy_http("POST", "/echo", body=b"network-test")
         self.assertIn(b"HTTP/1.1 200", response)
