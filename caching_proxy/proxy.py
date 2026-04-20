@@ -377,7 +377,7 @@ class ProxyServer:
         body = (
             "Loop detected by CSC 430 proxy.\n\n"
             f"You requested the proxy listener itself: {request.display_url}\n"
-            f"Open the admin panel on port {self.config.admin_port} instead.\n"
+            "Use the PyQt admin panel instead of requesting the proxy port.\n"
         )
         response = build_simple_response(508, "Loop Detected", body)
         client_socket.sendall(response)

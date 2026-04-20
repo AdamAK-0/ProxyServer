@@ -3,3 +3,5 @@
 # The normal HTTP proxy and HTTPS CONNECT tunnel use only the standard library.
 # The optional educational --mitm mode uses cryptography for local CA/cert generation.
 cryptography>=42.0.0
+# Native desktop admin and demo panels.
+PyQt5>=5.15.10

@@ -1,7 +1,7 @@
-"""Command-line entry point for running the proxy and admin interface.
+"""Command-line entry point for running the proxy and PyQt admin panel.
 
 Contributor: Adam - application wiring and CLI options.
-External code: none; standard library only.
+External code: PyQt5 for the desktop admin panel.
 """
 
 from __future__ import annotations
@@ -33,8 +33,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="CSC 430 caching proxy server")
     parser.add_argument("--host", default="127.0.0.1", help="Proxy listen host")
     parser.add_argument("--port", type=int, default=8888, help="Proxy listen port")
-    parser.add_argument("--admin-host", default="127.0.0.1", help="Admin dashboard listen host")
-    parser.add_argument("--admin-port", type=int, default=8081, help="Admin dashboard listen port")
+    parser.add_argument("--admin-host", default="127.0.0.1", help="Compatibility option; PyQt admin does not bind HTTP")
+    parser.add_argument("--admin-port", type=int, default=8081, help="Compatibility option; PyQt admin does not bind HTTP")
     parser.add_argument("--cache-ttl", type=int, default=120, help="Fallback cache timeout in seconds")
     parser.add_argument("--data-dir", default="data", help="Directory for cache, logs, and filters")
     parser.add_argument("--whitelist-only", action="store_true", help="Only allow whitelist matches")
@@ -61,18 +61,23 @@ def main() -> None:
         mitm_verify_origin_tls=not args.mitm_insecure_origin,
     )
     proxy, admin = build_runtime(config)
-    admin.start_in_thread()
+    proxy_thread = proxy.start_in_thread()
+    if proxy.bound_port is not None:
+        config.proxy_port = proxy.bound_port
     print(f"Proxy listening on {config.listen_host}:{config.proxy_port}")
-    print(f"Admin dashboard at http://{config.admin_host}:{admin.bound_port}")
+    print("PyQt admin panel opened on this machine.")
     if config.mitm_enabled:
         print("MITM mode enabled for educational HTTPS inspection.")
         print(f"Install/trust this local CA certificate for clients: {config.mitm_dir / 'ca.cert.pem'}")
     try:
-        proxy.serve_forever()
+        admin.run()
     except KeyboardInterrupt:
         print("\nShutting down proxy...")
+    except RuntimeError as exc:
+        print(f"\n{exc}")
     finally:
         proxy.shutdown()
+        proxy_thread.join(timeout=2)
         admin.shutdown()
 
 
