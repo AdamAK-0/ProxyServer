@@ -30,6 +30,10 @@ from .mitm import CertificateAuthority
 from .stats import ProxyStats
 
 
+class ClientClosedBeforeRequest(Exception):
+    """Raised when a client opens a socket and closes it without sending a request."""
+
+
 class ProxyServer:
     """Accepts browser/client requests and dispatches each connection to a thread."""
 
@@ -130,6 +134,8 @@ class ProxyServer:
                 )
                 client_socket.sendall(response)
                 self.stats.record_error()
+        except ClientClosedBeforeRequest:
+            return
         except BadRequest as exc:
             self._handle_error(client_socket, client_address, request, request_timestamp, 400, "Bad Request", str(exc))
         except OSError as exc:
@@ -464,7 +470,9 @@ class ProxyServer:
         while b"\r\n\r\n" not in data:
             chunk = client_socket.recv(self.config.buffer_size)
             if not chunk:
-                raise BadRequest("client closed connection before sending headers")
+                if not data:
+                    raise ClientClosedBeforeRequest()
+                raise BadRequest("client closed connection before completing headers")
             data.extend(chunk)
             if len(data) > self.config.max_header_size:
                 raise BadRequest("request headers are too large")
