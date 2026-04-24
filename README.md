@@ -102,15 +102,30 @@ To let a browser or command-line client trust intercepted HTTPS traffic, import/
 curl.exe -x http://127.0.0.1:8888 --cacert data\mitm\ca.cert.pem https://example.com/
 ```
 
+Firefox uses its own certificate store, so Windows trusting the CA is usually not enough. To test MITM mode with Firefox:
+
+1. Start the proxy with `python run_proxy.py --mitm`.
+2. Open Firefox Settings.
+3. Go to Privacy & Security.
+4. Scroll to Certificates and click View Certificates.
+5. Open the Authorities tab.
+6. Click Import and select `data\mitm\ca.cert.pem`.
+7. Check Trust this CA to identify websites.
+8. Restart Firefox and browse through the proxy again.
+
+Only import `ca.cert.pem`. Do not import or share `ca.key.pem`; that private key can sign certificates for the local MITM CA.
+
 MITM mode behavior:
 
 - The client still sends `CONNECT host:443`.
 - The proxy replies `200 Connection Established`.
-- The proxy presents a generated certificate for the requested host, signed by `data/mitm/ca.cert.pem`.
+- The proxy generates or reuses a certificate for the requested host, signed by `data/mitm/ca.cert.pem`.
 - The proxy decrypts one HTTPS request, logs the real HTTPS URL/method/status, forwards the request to the real server over TLS, and returns the response.
 - Cacheable intercepted HTTPS `GET` responses can be cached using the same cache logic.
 
 Privacy warning: only use `--mitm` in a controlled educational/demo environment. Do not use it on other people's traffic or accounts.
+
+For normal browsing through the proxy, run without `--mitm`. In that mode the proxy uses standard CONNECT tunneling, so sites such as `https://google.com/` keep their original public certificates and should not show a local CA warning.
 
 The PyQt demo panel also has a `Run MITM HTTPS` button. When the proxy is running with `--mitm`, that button performs the same trust-and-request flow as the `curl.exe --cacert` command from the server side and prints whether the proxy CA was detected in the HTTPS certificate chain.
 

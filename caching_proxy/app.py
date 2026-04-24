@@ -68,7 +68,12 @@ def main() -> None:
     print("PyQt admin panel opened on this machine.")
     if config.mitm_enabled:
         print("MITM mode enabled for educational HTTPS inspection.")
-        print(f"Install/trust this local CA certificate for clients: {config.mitm_dir / 'ca.cert.pem'}")
+        ca_cert = config.mitm_dir / "ca.cert.pem"
+        print(f"Local MITM CA certificate: {ca_cert}")
+        print("Firefox will reject sites such as google.com until this CA is trusted in Firefox.")
+        print("Firefox steps: Settings > Privacy & Security > Certificates > View Certificates > Authorities > Import")
+        print("Import the CA file above and enable: Trust this CA to identify websites.")
+        print("For normal HTTPS browsing without certificate warnings, run without --mitm.")
     try:
         admin.run()
     except KeyboardInterrupt:
