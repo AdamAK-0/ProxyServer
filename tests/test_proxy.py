@@ -10,6 +10,7 @@ import socket
 import ssl
 import tempfile
 import threading
+import time
 import unittest
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -222,6 +223,17 @@ class ProxyIntegrationTests(unittest.TestCase):
             )
         )
         self.assertEqual(self.stats.snapshot()["errors"], 0)
+        for _ in range(20):
+            if self.logger.excluded_log_file.exists():
+                break
+            time.sleep(0.05)
+        excluded = [
+            json.loads(line)
+            for line in self.logger.excluded_log_file.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(excluded[-1]["event"], "empty-client-connection")
+        self.assertEqual(excluded[-1]["reason"], "client closed connection before sending headers")
 
     def test_post_body_is_forwarded(self) -> None:
         response = self._proxy_http("POST", "/echo", body=b"network-test")

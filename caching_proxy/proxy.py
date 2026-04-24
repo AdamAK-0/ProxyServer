@@ -135,6 +135,13 @@ class ProxyServer:
                 client_socket.sendall(response)
                 self.stats.record_error()
         except ClientClosedBeforeRequest:
+            self.logger.log_excluded(
+                "empty-client-connection",
+                client_ip=client_address[0],
+                client_port=client_address[1],
+                reason="client closed connection before sending headers",
+                request_timestamp=request_timestamp,
+            )
             return
         except BadRequest as exc:
             self._handle_error(client_socket, client_address, request, request_timestamp, 400, "Bad Request", str(exc))

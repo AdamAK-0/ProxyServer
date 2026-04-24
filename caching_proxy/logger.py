@@ -19,6 +19,7 @@ class RequestLogger:
 
     def __init__(self, log_file: Path) -> None:
         self.log_file = log_file
+        self.excluded_log_file = log_file.with_name("excluded_log.txt")
         self.log_file.parent.mkdir(parents=True, exist_ok=True)
         self._lock = Lock()
 
@@ -31,6 +32,19 @@ class RequestLogger:
         line = json.dumps(record, sort_keys=True)
         with self._lock:
             with self.log_file.open("a", encoding="utf-8") as handle:
+                handle.write(line + "\n")
+
+    def log_excluded(self, event: str, **fields: Any) -> None:
+        """Write intentionally hidden/noisy events outside the admin dashboard log."""
+
+        record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "event": event,
+            **fields,
+        }
+        line = json.dumps(record, sort_keys=True)
+        with self._lock:
+            with self.excluded_log_file.open("a", encoding="utf-8") as handle:
                 handle.write(line + "\n")
 
     def tail(self, limit: int = 100) -> list[dict[str, Any]]:
