@@ -341,12 +341,25 @@ def _create_admin_window_class(QtCore: Any, QtWidgets: Any) -> type[Any]:
             header_text.addWidget(title)
             header_text.addWidget(service)
 
-            self.live_label = QtWidgets.QLabel("Starting")
-            self.live_label.setObjectName("livePill")
-            self.live_label.setMaximumHeight(46)
+            self._pulse_on = False
+            self.live_pill = QtWidgets.QFrame()
+            self.live_pill.setObjectName("livePill")
+            self.live_pill.setMaximumHeight(46)
+            live_layout = QtWidgets.QHBoxLayout(self.live_pill)
+            live_layout.setContentsMargins(12, 7, 12, 7)
+            live_layout.setSpacing(9)
+            self.live_dot = QtWidgets.QFrame()
+            self.live_dot.setObjectName("pulseDot")
+            self.live_dot.setProperty("pulseOn", True)
+            self.live_dot.setFixedSize(10, 10)
+            self.live_label = QtWidgets.QLabel("Live | Starting")
+            self.live_label.setObjectName("liveText")
+            live_layout.addWidget(self.live_dot)
+            live_layout.addWidget(self.live_label)
+
             header = QtWidgets.QHBoxLayout()
             header.addLayout(header_text, 1)
-            header.addWidget(self.live_label, 0)
+            header.addWidget(self.live_pill, 0)
             root.addLayout(header)
 
             self.warning_label = QtWidgets.QLabel("")
@@ -390,6 +403,9 @@ def _create_admin_window_class(QtCore: Any, QtWidgets: Any) -> type[Any]:
 
             self.statusBar().showMessage("Ready")
             self.setStyleSheet(_admin_stylesheet())
+            self._pulse_timer = QtCore.QTimer(self)
+            self._pulse_timer.timeout.connect(self._toggle_live_pulse)
+            self._pulse_timer.start(650)
 
         def _build_access_panel(self) -> Any:
             panel, layout = self._panel("Access Control")
@@ -436,6 +452,8 @@ def _create_admin_window_class(QtCore: Any, QtWidgets: Any) -> type[Any]:
             self.whitelist_table = QtWidgets.QTableWidget()
             self._setup_table(self.blacklist_table, ["Pattern", ""])
             self._setup_table(self.whitelist_table, ["Pattern", ""])
+            self._size_rule_table(self.blacklist_table)
+            self._size_rule_table(self.whitelist_table)
             self.blacklist_table.setMinimumHeight(150)
             self.whitelist_table.setMinimumHeight(150)
             self.rules_tabs.addTab(self.blacklist_table, "Blacklist")
@@ -521,6 +539,20 @@ def _create_admin_window_class(QtCore: Any, QtWidgets: Any) -> type[Any]:
             elif index == 1:
                 self.whitelist_button.setChecked(True)
 
+        def _size_rule_table(self, table: Any) -> None:
+            header = table.horizontalHeader()
+            header.setStretchLastSection(False)
+            header.setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
+            header.setSectionResizeMode(1, QtWidgets.QHeaderView.Fixed)
+            table.setColumnWidth(1, 86)
+
+        def _toggle_live_pulse(self) -> None:
+            self._pulse_on = not self._pulse_on
+            self.live_dot.setProperty("pulseOn", self._pulse_on)
+            self.live_dot.style().unpolish(self.live_dot)
+            self.live_dot.style().polish(self.live_dot)
+            self.live_dot.update()
+
         def _setup_table(self, table: Any, columns: list[str]) -> None:
             table.setColumnCount(len(columns))
             table.setHorizontalHeaderLabels(columns)
@@ -588,7 +620,8 @@ def _create_admin_window_class(QtCore: Any, QtWidgets: Any) -> type[Any]:
                 table.setSpan(0, 0, 1, 2)
                 table.setRowHeight(0, 42)
                 table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
-                table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
+                table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Fixed)
+                table.setColumnWidth(1, 86)
                 return
 
             table.setRowCount(len(rules))
@@ -605,10 +638,20 @@ def _create_admin_window_class(QtCore: Any, QtWidgets: Any) -> type[Any]:
                         selected_rule,
                     )
                 )
-                table.setCellWidget(row, 1, button)
+                table.setCellWidget(row, 1, self._centered_table_widget(button))
                 table.setRowHeight(row, 34)
             table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.Stretch)
-            table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.ResizeToContents)
+            table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Fixed)
+            table.setColumnWidth(1, 86)
+
+        def _centered_table_widget(self, widget: Any) -> Any:
+            wrapper = QtWidgets.QWidget()
+            wrapper.setObjectName("cellButtonWrap")
+            layout = QtWidgets.QHBoxLayout(wrapper)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(0)
+            layout.addWidget(widget, 0, QtCore.Qt.AlignCenter)
+            return wrapper
 
         def _render_cache(self, entries: list[dict[str, Any]]) -> None:
             self._cache_keys = [str(entry.get("key", "")) for entry in entries]
@@ -821,13 +864,27 @@ def _admin_stylesheet() -> str:
         QLabel#muted, QLabel#metricDetail, QLabel#metricLabel {
             color: #64748b;
         }
-        QLabel#livePill {
+        QFrame#livePill {
             background: #0b7a75;
-            color: white;
             border-radius: 6px;
-            padding: 6px 10px;
+        }
+        QLabel#liveText {
+            color: white;
             font-size: 9pt;
             font-weight: 700;
+        }
+        QFrame#pulseDot {
+            background: #9ee7ff;
+            border: 2px solid rgba(255, 255, 255, 0.70);
+            border-radius: 5px;
+        }
+        QFrame#pulseDot[pulseOn="true"] {
+            background: #38bdf8;
+            border: 2px solid rgba(255, 255, 255, 0.92);
+        }
+        QFrame#pulseDot[pulseOn="false"] {
+            background: #7dd3fc;
+            border: 2px solid rgba(255, 255, 255, 0.45);
         }
         QLabel#warning {
             background: #fff8e6;
@@ -842,6 +899,9 @@ def _admin_stylesheet() -> str:
             border-radius: 8px;
         }
         QFrame#metricCard QLabel, QGroupBox QLabel, QCheckBox {
+            background: transparent;
+        }
+        QWidget#cellButtonWrap {
             background: transparent;
         }
         QLabel#metricLabel {
