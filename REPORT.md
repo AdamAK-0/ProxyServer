@@ -1,12 +1,14 @@
-# CSC 430 Computer Networks Design Project Report
+# CSC 430 Computer Networks Design Project Final Report
 
 ## Project Information
 
-Project: Caching Proxy Server  
+Project: Caching Proxy Server with HTTP Forwarding, HTTPS CONNECT Tunneling, Disk Caching, Filtering, Logging, Statistics, and Admin Dashboard  
 Course: CSC 430 Computer Networks, Spring 2025-2026  
 Institution: Lebanese American University  
-Contributor: Adam  
-External code used: The default proxy uses Python standard library modules only. Optional MITM mode uses the third-party `cryptography` package for local CA and certificate generation.
+Students: Adam Wafi Abdel Karim, Hadi Majed, Karim Khalil  
+Programming language: Python  
+Core libraries: Python standard library modules including `socket`, `threading`, `select`, `ssl`, `json`, `pathlib`, `datetime`, `argparse`, `http.server`, and `urllib.parse`  
+External code used: PyQt5 is used for the desktop admin and demo panels. Optional MITM mode uses the third-party `cryptography` package for local CA and certificate generation.
 
 Submission due date from assignment: Sunday, April 26, 2026, end of day.
 
@@ -19,6 +21,25 @@ For HTTP requests, the proxy rewrites proxy-style absolute URLs into origin-serv
 For HTTPS requests, the default proxy mode supports secure forwarding through `CONNECT`. It returns `200 Connection Established` and then relays encrypted bytes between the client and target server without decrypting or inspecting them. An optional educational MITM mode can also be enabled with `--mitm`. In that mode, the proxy creates a local root CA, generates per-host certificates, decrypts one HTTPS request after the CONNECT handshake, forwards it to the real server over TLS, and relays the response back to the client.
 
 A PyQt desktop admin interface runs beside the proxy. It displays logs, cache entries, runtime statistics, and controls for editing blacklist/whitelist rules.
+
+## High-Level Architecture
+
+The project is split into small modules so that each network feature can be explained, tested, and maintained independently. The source tree separates the socket proxy core from configuration, access control, caching, logging, runtime statistics, the PyQt admin UI, optional MITM certificate support, and the local demo server.
+
+| File | Role |
+| --- | --- |
+| `run_proxy.py` | Small launcher that imports and runs `caching_proxy.app.main()` for the normal demo command. |
+| `caching_proxy/app.py` | Parses command-line flags, creates runtime objects, starts the proxy thread, and opens the PyQt admin panel. |
+| `caching_proxy/config.py` | Stores ports, paths, timeout values, buffer sizes, cache TTL, whitelist mode, and MITM mode. |
+| `caching_proxy/proxy.py` | Main socket server for client acceptance, worker threads, HTTP forwarding, HTTPS tunneling, optional MITM, logging, and error handling. |
+| `caching_proxy/http_utils.py` | HTTP request parsing, forwarding-request rewriting, status parsing, and simple response helpers. |
+| `caching_proxy/cache.py` | Disk-backed GET response cache with metadata, cache keys, TTL selection, expiration, cleanup, and deletion. |
+| `caching_proxy/access_control.py` | Blacklist/whitelist storage, runtime reloads, rule matching, whitelist-only mode, and block decisions. |
+| `caching_proxy/logger.py` | Thread-safe JSON-lines request, response, block, and error logging. |
+| `caching_proxy/stats.py` | Thread-safe counters for dashboard metrics such as active connections, requests, tunnels, cache hits, blocks, errors, and bytes. |
+| `caching_proxy/admin.py` | PyQt admin dashboard and compatibility controller methods for stats, logs, cache, and filters. |
+| `caching_proxy/mitm.py` | Optional local CA and per-host certificate generation used only in educational MITM mode. |
+| `demo_origin_server.py` | Local origin server and demo client panel for repeatable forwarding, caching, POST, blacklist, whitelist, HTTPS, and MITM demonstrations. |
 
 ## Requirement Mapping
 
@@ -54,7 +75,8 @@ Implemented in `caching_proxy/http_utils.py`.
 
 Implemented in `caching_proxy/proxy.py`.
 
-- The main thread accepts connections.
+- The proxy server runs in a daemon background thread so the PyQt admin window can run on the main thread.
+- The proxy accept loop accepts TCP connections from clients.
 - Each client connection is handled by a daemon worker thread.
 - Shared cache, logs, filters, and stats use locks where needed.
 
@@ -176,6 +198,7 @@ Test cases:
 - `test_snapshot_reflects_manual_whitelist_mode_change`: verifies the admin snapshot reflects whitelist mode changes.
 - `test_manual_filter_file_edit_accepts_utf8_bom`: verifies UTF-8 BOM filter files still load correctly.
 - `test_post_body_is_forwarded`: verifies POST body forwarding.
+- `test_empty_browser_preconnect_is_ignored`: verifies empty browser preconnect sockets are closed without recording noisy request errors.
 - `test_https_connect_tunnels_bytes_without_decrypting`: verifies CONNECT tunnel byte relay.
 - `test_self_proxy_request_is_rejected_without_recursive_timeout`: verifies accidental self-proxy requests are rejected immediately.
 - `test_optional_mitm_decrypts_and_forwards_https_request`: verifies optional MITM decrypt-forward-reencrypt behavior.
@@ -186,7 +209,7 @@ Test cases:
 Latest test result:
 
 ```text
-Ran 19 tests in 9.392s
+Ran 20 tests in 9.918s
 
 OK
 ```
@@ -279,7 +302,7 @@ python -m unittest discover -v
 The latest test result is:
 
 ```text
-Ran 19 tests in 9.392s
+Ran 20 tests in 9.918s
 
 OK
 ```
@@ -296,12 +319,14 @@ Call order:
 4. `caching_proxy.app.main()`
 5. `parse_args()`
 6. `ProxyConfig(...)`
-7. `config.ensure_directories()`
-8. `build_runtime(config)`
-9. `admin.start_in_thread()`
-10. `proxy.serve_forever()`
+7. `build_runtime(config)`
+8. `config.ensure_directories()` inside `build_runtime()`
+9. `proxy.start_in_thread()`
+10. `ProxyServer.serve_forever()` in the background proxy thread
+11. `admin.run()` on the main thread to open the PyQt dashboard
+12. `proxy.shutdown()` and `admin.shutdown()` during shutdown
 
-`parse_args()` reads command-line options such as the proxy port, admin port, cache timeout, whitelist-only mode, and MITM mode. `ProxyConfig` stores those settings in one object. `ensure_directories()` creates the runtime folders used for logs, cache entries, filters, and MITM certificates. `build_runtime()` creates all shared objects. The admin server starts in a background thread. The proxy then runs in the main thread and waits for client connections.
+`parse_args()` reads command-line options such as the proxy port, compatibility admin port, cache timeout, whitelist-only mode, and MITM mode. `ProxyConfig` stores those settings in one object. `ensure_directories()` creates the runtime folders used for logs, cache entries, filters, and MITM certificates. `build_runtime()` creates all shared objects. The proxy server starts in a background daemon thread. The PyQt admin dashboard then runs on the main thread because Qt expects the UI event loop to own the main process thread.
 
 This design keeps startup clean. `run_proxy.py` is only the launcher, `app.py` wires the application together, and `proxy.py` focuses on networking instead of command-line parsing.
 
@@ -725,21 +750,79 @@ Why keep `data/` out of git? It contains generated logs, cache files, certificat
 
 ### Short End-to-End Explanation
 
-When `python run_proxy.py` runs, the launcher calls `caching_proxy.app.main()`. That parses command-line options, creates the configuration, creates shared runtime objects for filters, cache, logs, and stats, starts the admin dashboard in a background thread, and starts the proxy server. The proxy creates a TCP listening socket on port `8888`. For every client connection, it starts a worker thread. The worker reads the HTTP request, parses method, host, port, and path, checks blacklist and whitelist rules, and then chooses the correct handling path. For HTTP, it checks the cache, rewrites headers, connects to the origin with a socket, forwards the request, reads the response, optionally caches it, sends it to the client, logs the result, and updates counters. For HTTPS in normal mode, it handles `CONNECT` by opening a TCP connection to the target and relaying encrypted bytes with `select`, so the proxy does not decrypt HTTPS. For the bonus MITM mode, the client must trust the generated CA certificate. The proxy then presents a generated certificate, decrypts the HTTPS request, forwards it to the real server over TLS, sends the response back, logs it, and updates MITM stats. The admin dashboard uses the same cache, filter, logger, and stats objects, so changes and counters update live.
+When `python run_proxy.py` runs, the launcher calls `caching_proxy.app.main()`. That parses command-line options, creates the configuration, creates shared runtime objects for filters, cache, logs, and stats, starts the proxy server in a background thread, and opens the PyQt admin dashboard on the main thread. The proxy creates a TCP listening socket on port `8888`. For every client connection, it starts a worker thread. The worker reads the HTTP request, parses method, host, port, and path, checks blacklist and whitelist rules, and then chooses the correct handling path. For HTTP, it checks the cache, rewrites headers, connects to the origin with a socket, forwards the request, reads the response, optionally caches it, sends it to the client, logs the result, and updates counters. For HTTPS in normal mode, it handles `CONNECT` by opening a TCP connection to the target and relaying encrypted bytes with `select`, so the proxy does not decrypt HTTPS. For the bonus MITM mode, the client must trust the generated CA certificate. The proxy then presents a generated certificate, decrypts the HTTPS request, forwards it to the real server over TLS, sends the response back, logs it, and updates MITM stats. The admin dashboard uses the same cache, filter, logger, and stats objects, so changes and counters update live.
+
+## Limitations and Future Improvements
+
+The proxy is designed for an educational HTTP/1.x networking demonstration, not for production deployment.
+
+- The response reader is simplified by adding `Connection: close` to forwarded requests. A production proxy would implement full persistent connection management, chunked transfer decoding, streaming, and connection pooling.
+- The cache stores complete responses after receiving them. Large-file streaming, byte-range requests, and partial caching are not implemented.
+- The access-control matcher is intentionally rule-based. A future version could add CIDR ranges, DNS reputation, rule groups, or category filtering.
+- The admin dashboard is a PyQt desktop window. A future version could expose the same compatibility controller through a browser-based dashboard.
+- MITM mode decrypts HTTPS only for controlled educational testing. A production-grade HTTPS inspection proxy would require much stronger certificate lifecycle handling, policy controls, auditing, and privacy safeguards.
+- The thread-per-connection model is simple to explain and works well for the class demo, but a high-scale version could use a thread pool or `asyncio`.
 
 ## Screenshot Checklist
 
 Add screenshots to the final submitted report:
 
-- Proxy terminal showing `Proxy listening on 127.0.0.1:8888`.
-- PyQt admin dashboard.
-- Automated test output showing all tests passing.
-- Repeated `/cache` request showing same cached response.
-- `/nocache` request showing changing response.
-- Blacklist demo showing `403 Forbidden`.
-- HTTPS CONNECT curl command.
-- Optional MITM demo button or curl command showing decrypted HTTPS mode.
+| Screenshot | What to Capture |
+| --- | --- |
+| 1 | Terminal running `python run_proxy.py` and showing `Proxy listening on 127.0.0.1:8888`. |
+| 2 | PyQt admin dashboard immediately after startup, showing runtime metrics and initial logs. |
+| 3 | Terminal running `python demo_origin_server.py --port 9000`. |
+| 4 | HTTP forwarding result for `http://127.0.0.1:9000/` through the proxy. |
+| 5 | Cache MISS then HIT demonstration using `/cache` twice, including admin cache/log evidence. |
+| 6 | No-store demonstration using `/nocache` twice. |
+| 7 | POST body forwarding result showing the echoed request body. |
+| 8 | Blacklist rule added in the admin panel and a `403 Forbidden` response. |
+| 9 | Whitelist rule added in the admin panel and an accepted response. |
+| 10 | Whitelist-only mode without a matching rule showing a blocked response. |
+| 11 | HTTPS CONNECT command result with `https://example.com/ -I`. |
+| 12 | Optional MITM command with `--cacert data/mitm/ca.cert.pem` and admin MITM counter/log evidence. |
+| 13 | Firefox HTTP test on a real website through the configured proxy. |
+| 14 | Firefox HTTPS test on a real website through the configured proxy. |
 
 ## Individual Contribution Notes
 
-Current code comments list Adam as the contributor. For a group submission, update this section and the top comments in source files to clearly state which student contributed to which part.
+### Group Members
+
+| Name | Main Role |
+| --- | --- |
+| Adam Wafi Abdel Karim | Main developer, system integrator, and technical lead |
+| Hadi Majed | Testing support, documentation support, and demo preparation |
+| Karim Khalil | Research support, report review, and presentation/demo support |
+
+### Contribution Summary
+
+The source-file contributor headers identify Adam Wafi Abdel Karim as the contributor for the main implementation modules. Adam contributed to the core code components, including application wiring, socket proxying, request parsing, caching, logging, filtering, statistics, the PyQt admin dashboard, optional MITM certificate handling, and demo tooling.
+
+Hadi Majed and Karim Khalil are included for supporting contributions in testing, report preparation, research, explanation preparation, and live-demo readiness. These tasks are part of the final project work because the project grade depends on the implementation, report, testing evidence, explanation, and demonstration.
+
+| Component / Task | Description of Contribution | Contributor(s) |
+| --- | --- | --- |
+| Project planning and requirement analysis | Reviewed the assignment requirements and mapped them to implementation, testing, reporting, and demo tasks. | Adam Wafi Abdel Karim, Hadi Majed, Karim Khalil |
+| Main application launcher and wiring | Implemented `run_proxy.py`, command-line parsing, runtime object creation, configuration setup, proxy startup, and admin-panel startup. | Adam Wafi Abdel Karim |
+| Socket proxy server | Implemented the TCP listening socket, accept loop, per-client worker threads, HTTP forwarding, HTTPS CONNECT tunneling, optional MITM routing, cache integration, filtering, logging, and error handling. | Adam Wafi Abdel Karim |
+| HTTP parsing and header rewriting | Implemented parsing for methods, URLs, versions, headers, hosts, ports, paths, schemes, bodies, and CONNECT requests, plus hop-by-hop header removal. | Adam Wafi Abdel Karim |
+| Cache system | Implemented disk-backed GET caching, cache-key generation, metadata storage, expiration checking, header-based invalidation, cleanup, and cache management. | Adam Wafi Abdel Karim |
+| Blacklist and whitelist filtering | Implemented persistent rules, blacklist mode, whitelist-only mode, domain/IP/URL matching, host-and-port matching, and runtime filter reloads. | Adam Wafi Abdel Karim |
+| Logging and runtime statistics | Implemented JSON-lines logging, log tailing, log clearing, and thread-safe counters for dashboard metrics. | Adam Wafi Abdel Karim |
+| Admin dashboard | Implemented the PyQt dashboard for viewing live stats, logs, cache entries, blacklist/whitelist configuration, reset actions, and clear actions. | Adam Wafi Abdel Karim |
+| Optional MITM helper | Implemented local CA generation, per-host certificate generation, and certificate storage for educational HTTPS MITM mode. | Adam Wafi Abdel Karim |
+| Local demo server | Implemented the local origin server and demo client used to test forwarding, caching, POST requests, blacklist behavior, HTTPS tunneling, and MITM behavior. | Adam Wafi Abdel Karim |
+| Testing support | Helped test HTTP forwarding, repeated GET caching, no-store behavior, blocked requests, whitelist behavior, and local demo-server scenarios. | Adam Wafi Abdel Karim, Hadi Majed |
+| Report organization and review | Helped connect the implementation to the project requirements and review the report for clarity, testing explanation, screenshots, and demo consistency. | Adam Wafi Abdel Karim, Hadi Majed, Karim Khalil |
+| Presentation and oral-defense preparation | Helped prepare the demo sequence and answers about startup order, sockets, threading, caching, filtering, HTTPS CONNECT, and admin dashboard behavior. | Adam Wafi Abdel Karim, Hadi Majed, Karim Khalil |
+
+### External Code and Library Disclosure
+
+The proxy core is implemented mainly with Python standard library modules such as `socket`, `threading`, `select`, `ssl`, `json`, `pathlib`, `datetime`, `http.server`, and `urllib.parse`.
+
+| External Dependency | Purpose |
+| --- | --- |
+| PyQt5 | Used for the desktop admin interface and demo panels. |
+| `cryptography` | Used only in optional MITM mode to generate the local root certificate authority and per-host TLS certificates. |
+
+No copied proxy-server source code is claimed in this report. The implementation decisions, program structure, socket handling, caching logic, filtering logic, logging system, statistics system, and admin-panel integration were written for this project.

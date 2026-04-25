@@ -1,7 +1,8 @@
 # CSC 430 Caching Proxy Server
 
-Contributor: Adam  
+Students: Adam Wafi Abdel Karim, Hadi Majed, Karim Khalil  
 Course: CSC 430 Computer Networks, Spring 2025-2026  
+Institution: Lebanese American University  
 External code: PyQt5 is used for the desktop admin/demo panels. Optional `--mitm` mode uses the third-party `cryptography` package for certificate generation.
 
 ## What This Project Implements
@@ -31,7 +32,7 @@ This project is a multithreaded caching proxy server written in Python. It suppo
 - `caching_proxy/stats.py` - thread-safe runtime counters.
 - `demo_origin_server.py` - local demo server for cache and blacklist testing.
 - `tests/test_proxy.py` - automated integration tests.
-- `REPORT.md` - report draft for submission.
+- `REPORT.md` - final report text for the project submission.
 
 ## Requirements
 
@@ -211,13 +212,14 @@ Current passing test coverage:
 - Runtime filter reloads from `data/filters.json`.
 - Admin dashboard payload, filter add, whitelist toggle, and compatibility API behavior.
 - POST request body forwarding.
+- Empty browser preconnect sockets are ignored without noisy request errors.
 - HTTPS CONNECT byte tunneling without decryption.
 - Optional HTTPS MITM decrypt-forward-reencrypt flow.
 - Self-proxy loop rejection.
 
 ## Notes for Submission
 
-The source files include contributor comments as required by the assignment. If this is a group submission, update those comments and `REPORT.md` so each team member's actual contribution is clear.
+The source files include contributor comments for the main implementation work, and `REPORT.md` includes the group contribution summary for Adam Wafi Abdel Karim, Hadi Majed, and Karim Khalil.
 
 For the final Blackboard report, add screenshots of:
 
